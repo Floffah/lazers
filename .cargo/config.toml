@@ -1,0 +1,15 @@
+[target.x86_64-unknown-none]
+rustflags = [
+    "-C",
+    "relocation-model=static",
+    "-C",
+    "link-arg=-Tkernel/lazers-kernel/linker.ld",
+    "-C",
+    "link-arg=-no-pie",
+    "-C",
+    "link-arg=--build-id=none",
+    "-C",
+    "link-arg=-z",
+    "-C",
+    "link-arg=max-page-size=0x1000",
+]

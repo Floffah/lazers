@@ -2,4 +2,4 @@
 
 This directory owns firmware entry, boot-path coordination, early platform initialization, and the handoff contract into the kernel.
 
-Keep this area narrowly scoped so the transition into the kernel stays explicit, portable, and easy to reason about.
+The first implementation is a UEFI `x86_64` loader that reads a freestanding ELF64 kernel from the EFI System Partition, exits boot services, and hands control to the kernel with a shared `BootInfo` contract.

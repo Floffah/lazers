@@ -27,14 +27,33 @@
 
 Use `just` as the primary task runner for repository workflows.
 
-Current bootstrap recipes:
+Current boot-path recipes:
 
-- `just check-structure`
-- `just workspace-metadata`
-- `just tree`
+- `just setup-toolchain`
+- `just build-loader`
+- `just build-kernel`
+- `just image`
+- `just run`
+- `just check`
+- `just clean`
 
 ## Direction
 
 The system is intended to be simple in operation, efficient enough for slower machines, modular enough to trim unneeded functionality, and modern enough to avoid cargo-culting legacy operating-system conventions.
 
 That direction should influence every foundational choice: kernel boundaries, subsystem APIs, configuration strategy, packaging, service model, and GUI architecture.
+
+## Current Boot Path
+
+The repository now implements the first bootable path as:
+
+- a UEFI loader built as `BOOTX64.EFI`
+- a freestanding `ELF64` kernel image
+- a shared boot information contract between the loader and kernel
+- a raw GPT disk image with a FAT32 EFI System Partition
+
+The initial success condition is intentionally narrow: the loader exits boot services, the kernel takes control, paints the framebuffer, and halts.
+
+## Host Notes
+
+The current image-assembly script targets the local macOS host tools available in this environment: `qemu-img`, `hdiutil`, and `diskutil`. The boot artifacts and disk layout remain standard UEFI artifacts even though the host-side assembly process is macOS-specific for now.
