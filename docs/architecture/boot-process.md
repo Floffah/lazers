@@ -14,7 +14,7 @@ QEMU is used only as the execution environment for that same path. The disk layo
 4. The loader captures framebuffer details, copies a normalized memory map, finds the ACPI RSDP if present, and allocates the initial kernel stack.
 5. The loader exits boot services.
 6. The loader jumps to the kernel entry with `rdi = BootInfo` and the stack switched to the allocated kernel stack.
-7. The kernel validates `BootInfo`, paints the framebuffer, and halts.
+7. The kernel validates `BootInfo`, renders a rudimentary text banner into the framebuffer, and halts.
 
 ## Contracts
 
@@ -32,4 +32,3 @@ QEMU is used only as the execution environment for that same path. The disk layo
 - kernel-owned page tables
 - interrupts, SMP, or userspace
 - QEMU-specific device handoff or firmware shortcuts
-
