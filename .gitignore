@@ -1,0 +1,13 @@
+target/
+build/
+dist/
+out/
+.idea/
+.vscode/
+.DS_Store
+*.img
+*.iso
+*.bin
+*.elf
+*.map
+.direnv/
