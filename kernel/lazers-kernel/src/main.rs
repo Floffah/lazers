@@ -35,11 +35,9 @@ pub extern "sysv64" fn kernel_main(boot_info: *const BootInfo) -> ! {
 
     console::init(boot_info.framebuffer);
     console::clear();
-    kprintln!("lazers v0.3");
-    kprintln!("kernel entered");
-    kprintln!("framebuffer ready");
+    kprintln!("Running lazers-kernel in suite v0.4");
     kprintln!(
-        "{}x{} {}",
+        "Using screen of {}x{} {}",
         boot_info.framebuffer.width,
         boot_info.framebuffer.height,
         pixel_format_name(boot_info.framebuffer.format)
