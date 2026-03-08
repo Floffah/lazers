@@ -34,6 +34,7 @@ Current boot-path recipes:
 - `just build-kernel`
 - `just image`
 - `just run`
+- `just run-headless`
 - `just check`
 - `just clean`
 

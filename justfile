@@ -21,7 +21,10 @@ image: build-loader build-kernel
 build: image
 
 run: image
-    tools/scripts/run-qemu.sh
+    bash tools/scripts/run-qemu.sh
+
+run-headless: image
+    bash tools/scripts/run-qemu-headless.sh
 
 check:
     cargo check --package boot-info

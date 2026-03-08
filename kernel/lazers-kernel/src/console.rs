@@ -1,13 +1,21 @@
 use boot_info::{FramebufferInfo, PixelFormat};
+use core::cell::UnsafeCell;
+use core::fmt;
+use core::mem::MaybeUninit;
 use core::ptr::write_volatile;
 use core::slice;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::font::{glyph_for, GLYPH_HEIGHT, GLYPH_WIDTH};
 
+const DEFAULT_FOREGROUND: u32 = 0xf9fafb;
+const DEFAULT_BACKGROUND: u32 = 0x111827;
 const PADDING_X: usize = 16;
 const PADDING_Y: usize = 16;
 const GLYPH_ADVANCE_X: usize = GLYPH_WIDTH + 2;
 const GLYPH_ADVANCE_Y: usize = GLYPH_HEIGHT + 3;
+
+static GLOBAL_CONSOLE: ConsoleCell = ConsoleCell::new();
 
 pub struct FramebufferConsole {
     framebuffer: FramebufferInfo,
@@ -43,11 +51,6 @@ impl FramebufferConsole {
 
         self.cursor_x = PADDING_X;
         self.cursor_y = PADDING_Y;
-    }
-
-    pub fn write_line(&mut self, text: &str) {
-        self.write_str(text);
-        self.new_line();
     }
 
     pub fn write_str(&mut self, text: &str) {
@@ -115,5 +118,100 @@ impl FramebufferConsole {
             PixelFormat::Bgr => blue | (green << 8) | (red << 16),
             PixelFormat::Unknown => rgb,
         }
+    }
+}
+
+impl fmt::Write for FramebufferConsole {
+    fn write_str(&mut self, text: &str) -> fmt::Result {
+        FramebufferConsole::write_str(self, text);
+        Ok(())
+    }
+}
+
+pub fn init(framebuffer: FramebufferInfo) {
+    GLOBAL_CONSOLE.initialize(FramebufferConsole::new(
+        framebuffer,
+        DEFAULT_FOREGROUND,
+        DEFAULT_BACKGROUND,
+    ));
+}
+
+pub fn clear() {
+    with_console(|console| {
+        console.clear();
+    });
+}
+
+pub fn write_fmt(args: fmt::Arguments<'_>) {
+    with_console(|console| {
+        let _ = fmt::Write::write_fmt(console, args);
+    });
+}
+
+fn with_console<F>(operation: F)
+where
+    F: FnOnce(&mut FramebufferConsole),
+{
+    let Some(mut guard) = GLOBAL_CONSOLE.try_lock() else {
+        return;
+    };
+
+    operation(guard.get());
+}
+
+struct ConsoleCell {
+    initialized: AtomicBool,
+    locked: AtomicBool,
+    console: UnsafeCell<MaybeUninit<FramebufferConsole>>,
+}
+
+impl ConsoleCell {
+    const fn new() -> Self {
+        Self {
+            initialized: AtomicBool::new(false),
+            locked: AtomicBool::new(false),
+            console: UnsafeCell::new(MaybeUninit::uninit()),
+        }
+    }
+
+    fn initialize(&self, console: FramebufferConsole) {
+        unsafe {
+            (*self.console.get()).write(console);
+        }
+        self.initialized.store(true, Ordering::Release);
+    }
+
+    fn try_lock(&self) -> Option<ConsoleGuard<'_>> {
+        if !self.initialized.load(Ordering::Acquire) {
+            return None;
+        }
+
+        if self
+            .locked
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            return None;
+        }
+
+        Some(ConsoleGuard { cell: self })
+    }
+}
+
+unsafe impl Sync for ConsoleCell {}
+
+struct ConsoleGuard<'a> {
+    cell: &'a ConsoleCell,
+}
+
+impl<'a> ConsoleGuard<'a> {
+    fn get(&mut self) -> &mut FramebufferConsole {
+        unsafe { (*self.cell.console.get()).assume_init_mut() }
+    }
+}
+
+impl Drop for ConsoleGuard<'_> {
+    fn drop(&mut self) {
+        self.cell.locked.store(false, Ordering::Release);
     }
 }
