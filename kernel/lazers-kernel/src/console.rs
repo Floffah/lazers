@@ -14,8 +14,15 @@ const PADDING_X: usize = 16;
 const PADDING_Y: usize = 16;
 const GLYPH_ADVANCE_X: usize = GLYPH_WIDTH + 2;
 const GLYPH_ADVANCE_Y: usize = GLYPH_HEIGHT + 3;
+const MAX_TRACKED_ROWS: usize = 512;
 
 static GLOBAL_CONSOLE: ConsoleCell = ConsoleCell::new();
+
+#[derive(Clone, Copy, Default)]
+struct ConsoleCursor {
+    column: usize,
+    row: usize,
+}
 
 pub struct FramebufferConsole {
     framebuffer: FramebufferInfo,
@@ -26,13 +33,15 @@ pub struct FramebufferConsole {
     rows: usize,
     cursor_column: usize,
     cursor_row: usize,
+    row_lengths: [usize; MAX_TRACKED_ROWS],
+    input_floor: Option<ConsoleCursor>,
 }
 
 impl FramebufferConsole {
     pub fn new(framebuffer: FramebufferInfo, foreground: u32, background: u32) -> Self {
         let visible_height = visible_height_pixels(framebuffer);
         let columns = usable_columns(framebuffer.width as usize);
-        let rows = usable_rows(visible_height);
+        let rows = usable_rows(visible_height).min(MAX_TRACKED_ROWS);
 
         Self {
             framebuffer,
@@ -43,6 +52,8 @@ impl FramebufferConsole {
             rows,
             cursor_column: 0,
             cursor_row: 0,
+            row_lengths: [0; MAX_TRACKED_ROWS],
+            input_floor: None,
         }
     }
 
@@ -58,24 +69,45 @@ impl FramebufferConsole {
 
         self.cursor_column = 0;
         self.cursor_row = 0;
+        self.row_lengths.fill(0);
+        self.input_floor = None;
     }
 
     pub fn write_str(&mut self, text: &str) {
         for byte in text.bytes() {
             match byte {
                 b'\n' => self.new_line(),
-                _ => {
-                    if self.cursor_column >= self.columns {
-                        self.new_line();
-                    }
-
-                    let origin_x = PADDING_X + (self.cursor_column * GLYPH_ADVANCE_X);
-                    let origin_y = PADDING_Y + (self.cursor_row * GLYPH_ADVANCE_Y);
-                    self.draw_glyph(origin_x, origin_y, glyph_for(byte));
-                    self.cursor_column += 1;
-                }
+                _ => self.write_byte(byte),
             }
         }
+    }
+
+    pub fn begin_input_region(&mut self) {
+        self.input_floor = Some(self.cursor());
+    }
+
+    pub fn backspace_input(&mut self) -> bool {
+        let Some(floor) = self.input_floor else {
+            return false;
+        };
+
+        let cursor = self.cursor();
+        if cursor.row == floor.row && cursor.column == floor.column {
+            return false;
+        }
+
+        let Some(target) = self.previous_cursor_position() else {
+            return false;
+        };
+        if target.row < floor.row || (target.row == floor.row && target.column < floor.column) {
+            return false;
+        }
+
+        self.clear_cell(target.column, target.row);
+        self.cursor_column = target.column;
+        self.cursor_row = target.row;
+        self.row_lengths[target.row] = target.column;
+        true
     }
 
     fn new_line(&mut self) {
@@ -111,6 +143,12 @@ impl FramebufferConsole {
         {
             let pixels = self.pixels_mut();
             pixels.copy_within(source_start..source_end, destination_start);
+        }
+
+        self.row_lengths.copy_within(1..self.rows, 0);
+        self.row_lengths[self.rows.saturating_sub(1)] = 0;
+        if let Some(floor) = self.input_floor.as_mut() {
+            floor.row = floor.row.saturating_sub(1);
         }
 
         self.clear_band(bottom - shift, bottom);
@@ -184,6 +222,65 @@ impl FramebufferConsole {
             PixelFormat::Unknown => rgb,
         }
     }
+
+    fn write_byte(&mut self, byte: u8) {
+        if self.cursor_column >= self.columns {
+            self.new_line();
+        }
+
+        let origin_x = PADDING_X + (self.cursor_column * GLYPH_ADVANCE_X);
+        let origin_y = PADDING_Y + (self.cursor_row * GLYPH_ADVANCE_Y);
+        self.clear_glyph_area(origin_x, origin_y);
+        self.draw_glyph(origin_x, origin_y, glyph_for(byte));
+        self.cursor_column += 1;
+        self.row_lengths[self.cursor_row] = self.row_lengths[self.cursor_row].max(self.cursor_column);
+    }
+
+    fn clear_glyph_area(&mut self, origin_x: usize, origin_y: usize) {
+        let background = self.encode_color(self.background);
+
+        for row in 0..GLYPH_HEIGHT {
+            for column in 0..GLYPH_ADVANCE_X {
+                self.put_pixel(origin_x + column, origin_y + row, background);
+            }
+        }
+    }
+
+    fn clear_cell(&mut self, column: usize, row: usize) {
+        let origin_x = PADDING_X + (column * GLYPH_ADVANCE_X);
+        let origin_y = PADDING_Y + (row * GLYPH_ADVANCE_Y);
+        self.clear_glyph_area(origin_x, origin_y);
+    }
+
+    fn previous_cursor_position(&self) -> Option<ConsoleCursor> {
+        if self.cursor_column > 0 {
+            return Some(ConsoleCursor {
+                column: self.cursor_column - 1,
+                row: self.cursor_row,
+            });
+        }
+
+        let mut row = self.cursor_row;
+        while row > 0 {
+            row -= 1;
+            let length = self.row_lengths[row];
+            if length > 0 {
+                return Some(ConsoleCursor {
+                    column: length - 1,
+                    row,
+                });
+            }
+        }
+
+        None
+    }
+
+    fn cursor(&self) -> ConsoleCursor {
+        ConsoleCursor {
+            column: self.cursor_column,
+            row: self.cursor_row,
+        }
+    }
 }
 
 impl fmt::Write for FramebufferConsole {
@@ -207,6 +304,16 @@ pub fn clear() {
     });
 }
 
+pub fn begin_input_region() {
+    with_console(|console| {
+        console.begin_input_region();
+    });
+}
+
+pub fn backspace_input() -> bool {
+    with_console_result(|console| console.backspace_input()).unwrap_or(false)
+}
+
 pub fn write_fmt(args: fmt::Arguments<'_>) {
     with_console(|console| {
         let _ = fmt::Write::write_fmt(console, args);
@@ -222,6 +329,17 @@ where
     };
 
     operation(guard.get());
+}
+
+fn with_console_result<F, T>(operation: F) -> Option<T>
+where
+    F: FnOnce(&mut FramebufferConsole) -> T,
+{
+    let Some(mut guard) = GLOBAL_CONSOLE.try_lock() else {
+        return None;
+    };
+
+    Some(operation(guard.get()))
 }
 
 fn visible_height_pixels(framebuffer: FramebufferInfo) -> usize {

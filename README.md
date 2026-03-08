@@ -53,7 +53,7 @@ The repository now implements the first bootable path as:
 - a shared boot information contract between the loader and kernel
 - a raw GPT disk image with a FAT32 EFI System Partition
 
-The initial success condition is intentionally narrow: the loader exits boot services, the kernel takes control, renders a rudimentary text banner, and halts.
+The current success condition is still intentionally narrow: the loader exits boot services, the kernel takes control, renders a rudimentary text console, and can echo placeholder keyboard input while the first shell architecture is still being built.
 
 ## Host Notes
 

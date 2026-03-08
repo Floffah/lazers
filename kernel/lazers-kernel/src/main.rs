@@ -5,6 +5,7 @@
 mod macros;
 mod console;
 mod font;
+mod keyboard;
 
 use core::arch::{asm, global_asm};
 use core::panic::PanicInfo;
@@ -35,15 +36,16 @@ pub extern "sysv64" fn kernel_main(boot_info: *const BootInfo) -> ! {
 
     console::init(boot_info.framebuffer);
     console::clear();
-    kprintln!("Running lazers-kernel in suite v0.4");
+    kprintln!("Running lazers-kernel in suite v0.5");
     kprintln!(
         "Using screen of {}x{} {}",
         boot_info.framebuffer.width,
         boot_info.framebuffer.height,
         pixel_format_name(boot_info.framebuffer.format)
     );
+    console::begin_input_region();
 
-    halt_forever();
+    run_keyboard_echo_loop();
 }
 
 fn pixel_format_name(format: PixelFormat) -> &'static str {
@@ -58,6 +60,33 @@ fn halt_forever() -> ! {
     loop {
         unsafe {
             asm!("hlt", options(nomem, nostack, preserves_flags));
+        }
+    }
+}
+
+fn run_keyboard_echo_loop() -> ! {
+    loop {
+        keyboard::poll();
+
+        while let Some(event) = keyboard::pop_event() {
+            match event.key {
+                keyboard::KeyCode::Enter if event.state == keyboard::KeyState::Pressed => {
+                    kprintln!();
+                    console::begin_input_region();
+                }
+                keyboard::KeyCode::Backspace if event.state == keyboard::KeyState::Pressed => {
+                    let _ = console::backspace_input();
+                }
+                _ => {
+                    if let Some(character) = keyboard::event_to_char(event) {
+                        kprint!("{}", character);
+                    }
+                }
+            }
+        }
+
+        unsafe {
+            asm!("pause", options(nomem, nostack, preserves_flags));
         }
     }
 }
