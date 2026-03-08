@@ -1,49 +1,52 @@
 use crate::terminal::TerminalEndpoint;
 
+pub const MAX_PROCESS_HANDLES: usize = 8;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HandleId(pub usize);
+
 #[derive(Clone, Copy)]
-pub enum IoHandle {
-    TerminalInput(&'static TerminalEndpoint),
-    TerminalOutput(&'static TerminalEndpoint),
+pub enum KernelObject {
+    TerminalEndpoint(&'static TerminalEndpoint),
 }
 
-impl IoHandle {
-    pub const fn terminal_input(endpoint: &'static TerminalEndpoint) -> Self {
-        Self::TerminalInput(endpoint)
-    }
-
-    pub const fn terminal_output(endpoint: &'static TerminalEndpoint) -> Self {
-        Self::TerminalOutput(endpoint)
-    }
-
+impl KernelObject {
     pub fn read_byte(self) -> Option<u8> {
         match self {
-            Self::TerminalInput(endpoint) => endpoint.pop_input_byte(),
-            Self::TerminalOutput(_) => None,
+            Self::TerminalEndpoint(endpoint) => endpoint.pop_input_byte(),
         }
     }
 
     pub fn write_byte(self, byte: u8) -> bool {
         match self {
-            Self::TerminalInput(_) => false,
-            Self::TerminalOutput(endpoint) => endpoint.push_output_byte(byte),
+            Self::TerminalEndpoint(endpoint) => endpoint.push_output_byte(byte),
         }
     }
 }
 
 #[derive(Clone, Copy)]
 pub struct StdioHandles {
-    pub stdin: IoHandle,
-    pub stdout: IoHandle,
-    #[allow(dead_code)]
-    pub stderr: IoHandle,
+    pub stdin: HandleId,
+    pub stdout: HandleId,
+    pub stderr: HandleId,
 }
 
 impl StdioHandles {
-    pub const fn new(stdin: IoHandle, stdout: IoHandle, stderr: IoHandle) -> Self {
+    pub const fn new(stdin: HandleId, stdout: HandleId, stderr: HandleId) -> Self {
         Self {
             stdin,
             stdout,
             stderr,
         }
     }
+
+    pub const fn empty() -> Self {
+        Self {
+            stdin: HandleId(DEFAULT_INVALID_HANDLE),
+            stdout: HandleId(DEFAULT_INVALID_HANDLE),
+            stderr: HandleId(DEFAULT_INVALID_HANDLE),
+        }
+    }
 }
+
+const DEFAULT_INVALID_HANDLE: usize = usize::MAX;

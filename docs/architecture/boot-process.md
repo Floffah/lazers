@@ -14,7 +14,7 @@ QEMU is used only as the execution environment for that same path. The disk layo
 4. The loader captures framebuffer details, copies a normalized memory map, finds the ACPI RSDP if present, and allocates the initial kernel stack.
 5. The loader exits boot services.
 6. The loader jumps to the kernel entry with `rdi = BootInfo` and the stack switched to the allocated kernel stack.
-7. The kernel validates `BootInfo`, renders the initial banner, initializes the first terminal surface and endpoint, and runs a kernel-hosted text task through stdio-style handles.
+7. The kernel validates `BootInfo`, renders the initial banner, initializes the first terminal surface and endpoint, creates the first bootstrap process and threads, and enters a cooperative scheduler.
 
 ## Contracts
 

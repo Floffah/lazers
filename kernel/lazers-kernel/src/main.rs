@@ -7,13 +7,14 @@ mod console;
 mod font;
 mod io;
 mod keyboard;
-mod task;
+mod process;
+mod scheduler;
 mod terminal;
+mod thread;
 
 use core::arch::{asm, global_asm};
 use core::panic::PanicInfo;
 use boot_info::{BootInfo, PixelFormat};
-use io::{IoHandle, StdioHandles};
 
 global_asm!(
     r#"
@@ -50,17 +51,17 @@ pub extern "sysv64" fn kernel_main(boot_info: *const BootInfo) -> ! {
 
     let endpoint = terminal::primary_endpoint();
     let surface = terminal::TerminalSurface::new(endpoint);
-    let text_task = task::TextTask::new(
-        task::echo_task_entry,
-        StdioHandles::new(
-            IoHandle::terminal_input(endpoint),
-            IoHandle::terminal_output(endpoint),
-            IoHandle::terminal_output(endpoint),
-        ),
-    );
     surface.begin_session();
-
-    run_terminal_loop(surface, text_task);
+    scheduler::init();
+    let terminal_process = scheduler::create_bootstrap_process(scheduler::BootstrapProcessConfig {
+        name: "bootstrap-terminal",
+        terminal_endpoint: endpoint,
+    });
+    let _terminal_thread =
+        scheduler::create_kernel_thread("terminal", Some(terminal_process), terminal_thread_entry);
+    let idle_thread = scheduler::create_kernel_thread("idle", None, idle_thread_entry);
+    scheduler::mark_idle_thread(idle_thread);
+    scheduler::start();
 }
 
 fn pixel_format_name(format: PixelFormat) -> &'static str {
@@ -71,7 +72,7 @@ fn pixel_format_name(format: PixelFormat) -> &'static str {
     }
 }
 
-fn halt_forever() -> ! {
+pub(crate) fn halt_forever() -> ! {
     loop {
         unsafe {
             asm!("hlt", options(nomem, nostack, preserves_flags));
@@ -79,7 +80,10 @@ fn halt_forever() -> ! {
     }
 }
 
-fn run_terminal_loop(surface: terminal::TerminalSurface, text_task: task::TextTask) -> ! {
+fn terminal_thread_entry() -> ! {
+    let endpoint = terminal::primary_endpoint();
+    let surface = terminal::TerminalSurface::new(endpoint);
+
     loop {
         keyboard::poll();
 
@@ -87,11 +91,34 @@ fn run_terminal_loop(surface: terminal::TerminalSurface, text_task: task::TextTa
             surface.handle_key_event(event);
         }
 
-        text_task.run_step();
+        echo_program_step();
         surface.flush_output();
+        scheduler::yield_now();
+    }
+}
 
+fn idle_thread_entry() -> ! {
+    loop {
         unsafe {
             asm!("pause", options(nomem, nostack, preserves_flags));
+        }
+        scheduler::yield_now();
+    }
+}
+
+fn echo_program_step() {
+    while let Some(byte) = scheduler::current_process_read_stdin_byte() {
+        match byte {
+            b'\n' => {
+                let _ = scheduler::current_process_write_stdout_byte(b'\n');
+            }
+            0x7f => {
+                let _ = scheduler::current_process_write_stdout_byte(0x7f);
+            }
+            0x20..=0x7e => {
+                let _ = scheduler::current_process_write_stdout_byte(byte);
+            }
+            _ => {}
         }
     }
 }
