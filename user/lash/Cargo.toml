@@ -1,0 +1,13 @@
+[package]
+name = "lash"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+liblazer.workspace = true
+
+[[bin]]
+name = "lash"
+path = "src/main.rs"

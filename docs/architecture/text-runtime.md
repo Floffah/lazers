@@ -19,7 +19,7 @@ The current text runtime keeps the model intentionally small, but it now sits on
 - one fullscreen terminal surface
 - one terminal endpoint
 - one kernel system process that owns terminal-service work
-- one user echo process loaded from `/bin/echo` on the system partition
+- one user shell process loaded from `/bin/lash` on the system partition
 - process-owned stdio bound through a process-owned handle table
 - one kernel terminal thread that handles keyboard polling and terminal flushing
 - one user thread that reads and writes through `stdin`/`stdout` syscalls

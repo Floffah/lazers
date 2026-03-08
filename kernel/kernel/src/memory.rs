@@ -19,6 +19,7 @@ pub const USER_STACK_PAGES: usize = 16;
 const MAX_SEGMENT_PAGES: usize = 128;
 const MAX_FREE_RANGES: usize = 128;
 const MAX_OWNED_PAGES: usize = MAX_SEGMENT_PAGES + USER_STACK_PAGES + 32;
+const MAX_SHARED_KERNEL_MAPPINGS: usize = 16;
 const PAGE_PRESENT: u64 = 1 << 0;
 const PAGE_WRITABLE: u64 = 1 << 1;
 const PAGE_USER: u64 = 1 << 2;
@@ -121,6 +122,7 @@ pub enum MemoryError {
     AddressSpaceUninitialized,
     AllocatorExhausted,
     InvalidKernelBufferSize,
+    SharedKernelMappingCapacityExceeded,
     Elf(ElfError),
     UserImageOutOfRange,
     SegmentOverlapCapacityExceeded,
@@ -135,6 +137,7 @@ impl MemoryError {
             Self::AddressSpaceUninitialized => "kernel address space is not initialized",
             Self::AllocatorExhausted => "physical page allocator is exhausted",
             Self::InvalidKernelBufferSize => "kernel buffer size is invalid",
+            Self::SharedKernelMappingCapacityExceeded => "shared kernel mapping capacity is exhausted",
             Self::Elf(error) => elf_error_as_str(error),
             Self::UserImageOutOfRange => "user image falls outside the fixed user layout",
             Self::SegmentOverlapCapacityExceeded => "user image mapping capacity is exhausted",
@@ -225,7 +228,8 @@ pub fn map_kernel_identity_range(start: u64, end: u64, writable: bool) -> Result
             .kernel_space
             .ok_or(MemoryError::AddressSpaceUninitialized)?;
         let mut builder = AddressSpaceBuilder::new(kernel_space.root_paddr(), None);
-        builder.map_identity_4k_range(start, end, flags)
+        builder.map_identity_4k_range(start, end, flags)?;
+        state.record_shared_kernel_mapping(start, end, writable)
     })?;
 
     crate::arch::load_page_table(kernel_address_space().root_paddr());
@@ -247,9 +251,6 @@ pub fn load_user_program(bytes: &[u8]) -> Result<LoadedUserProgram, MemoryError>
     with_state_mut(|state| {
         let mut owned_pages = OwnedPages::empty();
         let result = (|| {
-            let kernel_space = state
-                .kernel_space
-                .ok_or(MemoryError::AddressSpaceUninitialized)?;
             let root_paddr = state.allocate_page()?;
             owned_pages.push(root_paddr)?;
             let mut builder = AddressSpaceBuilder::new(root_paddr, Some(&mut owned_pages));
@@ -270,8 +271,7 @@ pub fn load_user_program(bytes: &[u8]) -> Result<LoadedUserProgram, MemoryError>
                 )?;
             }
 
-            // Keep the active kernel mappings intact while loading and dispatching the user program.
-            crate::arch::load_page_table(kernel_space.root_paddr());
+            state.replay_shared_kernel_mappings(&mut builder)?;
 
             let mut pages = UserPageMap::new();
             for header_result in elf.program_headers() {
@@ -422,6 +422,8 @@ struct MemoryState {
     phys_window_end: u64,
     framebuffer_start: u64,
     framebuffer_end: u64,
+    shared_kernel_mappings: [SharedKernelMapping; MAX_SHARED_KERNEL_MAPPINGS],
+    shared_kernel_mapping_count: usize,
 }
 
 impl MemoryState {
@@ -432,6 +434,8 @@ impl MemoryState {
             phys_window_end: PHYS_WINDOW_START,
             framebuffer_start: 0,
             framebuffer_end: 0,
+            shared_kernel_mappings: [SharedKernelMapping::empty(); MAX_SHARED_KERNEL_MAPPINGS],
+            shared_kernel_mapping_count: 0,
         }
     }
 
@@ -488,6 +492,76 @@ impl MemoryState {
 
     fn free_contiguous_pages(&mut self, start: u64, count: usize) {
         self.allocator.free_contiguous_pages(start, count);
+    }
+
+    fn record_shared_kernel_mapping(
+        &mut self,
+        start: u64,
+        end: u64,
+        writable: bool,
+    ) -> Result<(), MemoryError> {
+        let start = align_down(start, PAGE_SIZE as u64);
+        let end = align_up(end, PAGE_SIZE as u64);
+        if start >= end {
+            return Ok(());
+        }
+
+        let mut index = 0;
+        while index < self.shared_kernel_mapping_count {
+            let mapping = self.shared_kernel_mappings[index];
+            if mapping.start <= start && mapping.end >= end && mapping.writable == writable {
+                return Ok(());
+            }
+            index += 1;
+        }
+
+        if self.shared_kernel_mapping_count >= self.shared_kernel_mappings.len() {
+            return Err(MemoryError::SharedKernelMappingCapacityExceeded);
+        }
+
+        self.shared_kernel_mappings[self.shared_kernel_mapping_count] =
+            SharedKernelMapping::new(start, end, writable);
+        self.shared_kernel_mapping_count += 1;
+        Ok(())
+    }
+
+    fn replay_shared_kernel_mappings(
+        &self,
+        builder: &mut AddressSpaceBuilder,
+    ) -> Result<(), MemoryError> {
+        let mut index = 0;
+        while index < self.shared_kernel_mapping_count {
+            let mapping = self.shared_kernel_mappings[index];
+            let flags = PAGE_PRESENT | if mapping.writable { PAGE_WRITABLE } else { 0 };
+            builder.map_identity_4k_range(mapping.start, mapping.end, flags)?;
+            index += 1;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SharedKernelMapping {
+    start: u64,
+    end: u64,
+    writable: bool,
+}
+
+impl SharedKernelMapping {
+    const fn empty() -> Self {
+        Self {
+            start: 0,
+            end: 0,
+            writable: false,
+        }
+    }
+
+    const fn new(start: u64, end: u64, writable: bool) -> Self {
+        Self {
+            start,
+            end,
+            writable,
+        }
     }
 }
 

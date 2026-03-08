@@ -13,6 +13,11 @@ const SYS_YIELD: u64 = 2;
 const SYS_EXIT: u64 = 3;
 const SYS_SPAWN_WAIT: u64 = 4;
 
+const SPAWN_ERROR_INVALID_PATH: usize = usize::MAX;
+const SPAWN_ERROR_FILE_NOT_FOUND: usize = usize::MAX - 1;
+const SPAWN_ERROR_INVALID_EXECUTABLE: usize = usize::MAX - 2;
+const SPAWN_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 3;
+
 /// Dispatches a syscall trap frame in place.
 ///
 /// The user-mode calling convention places the syscall number in `rax` and the
@@ -59,14 +64,20 @@ fn syscall_write(fd: usize, buffer_address: u64, len: usize) -> usize {
 
 fn syscall_spawn_wait(path_address: u64, path_len: usize) -> usize {
     let Some(path_bytes) = memory::user_slice(path_address, path_len) else {
-        return usize::MAX;
+        return SPAWN_ERROR_INVALID_PATH;
     };
     let Ok(path) = core::str::from_utf8(path_bytes) else {
-        return usize::MAX;
+        return SPAWN_ERROR_INVALID_PATH;
     };
     if !path.starts_with('/') {
-        return usize::MAX;
+        return SPAWN_ERROR_INVALID_PATH;
     }
 
-    crate::scheduler::spawn_user_process_and_wait(path).unwrap_or(usize::MAX)
+    match crate::scheduler::spawn_user_process_and_wait(path) {
+        Ok(status) => status,
+        Err(crate::scheduler::SpawnError::InvalidPath) => SPAWN_ERROR_INVALID_PATH,
+        Err(crate::scheduler::SpawnError::FileNotFound) => SPAWN_ERROR_FILE_NOT_FOUND,
+        Err(crate::scheduler::SpawnError::InvalidExecutable) => SPAWN_ERROR_INVALID_EXECUTABLE,
+        Err(crate::scheduler::SpawnError::ResourceUnavailable) => SPAWN_ERROR_RESOURCE_UNAVAILABLE,
+    }
 }

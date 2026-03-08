@@ -53,9 +53,9 @@ The repository now implements the first bootable path as:
 - a shared boot information contract between the loader and kernel
 - a raw GPT disk image with:
   - a `FAT32` EFI System Partition that holds `BOOTX64.EFI` and `kernel.elf`
-  - a `FAT32` system partition that is mounted as `/` and stages `/bin/echo`
+  - a `FAT32` system partition that is mounted as `/` and stages `/bin/lash`, `/bin/echo`, and future userland binaries
 
-The current success condition is still intentionally narrow: the loader exits boot services, the kernel takes control, replaces the firmware page tables, mounts the system partition, and runs one disk-backed user-mode text program through the terminal/stdin/stdout architecture that future userland programs will reuse. Early user binaries now build on a shared `liblazer` runtime crate rather than carrying their own bootstrap and syscall glue, and the runtime now includes the first synchronous user-initiated child-process spawn path that `lash` will use next.
+The current success condition is still intentionally narrow: the loader exits boot services, the kernel takes control, replaces the firmware page tables, mounts the system partition, and launches `lash` as the first disk-backed user-mode shell. Early user binaries build on a shared `liblazer` runtime crate rather than carrying their own bootstrap and syscall glue, and the runtime now includes the first synchronous user-initiated child-process spawn path that `lash` uses to launch other programs.
 
 ## Host Notes
 

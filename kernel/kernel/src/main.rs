@@ -53,7 +53,7 @@ pub extern "sysv64" fn kernel_main(boot_info: *const BootInfo) -> ! {
     arch::init();
     console::init(boot_info.framebuffer);
     console::clear();
-    kprintln!("Running kernel in suite v0.5");
+    kprintln!("Running kernel in suite v0.9");
     kprintln!(
         "Using screen of {}x{} {}",
         boot_info.framebuffer.width,
@@ -67,7 +67,7 @@ pub extern "sysv64" fn kernel_main(boot_info: *const BootInfo) -> ! {
 
     storage::init_root_fs()
         .unwrap_or_else(|error| panic!("failed to mount root filesystem: {}", error.as_str()));
-    let user_program = load_user_program_from_disk("/bin/echo");
+    let user_program = load_user_program_from_disk("/bin/lash");
 
     scheduler::init();
     let kernel_process = scheduler::create_process(scheduler::ProcessConfig {
@@ -77,14 +77,14 @@ pub extern "sysv64" fn kernel_main(boot_info: *const BootInfo) -> ! {
         owned_pages: memory::OwnedPages::empty(),
     });
     let user_process = scheduler::create_process(scheduler::ProcessConfig {
-        name: "user-echo",
+        name: "user-lash",
         address_space: user_program.address_space,
         terminal_endpoint: Some(endpoint),
         owned_pages: user_program.owned_pages,
     });
     let _terminal_thread = scheduler::create_kernel_thread("terminal", kernel_process, terminal_thread_entry);
     let _user_thread = scheduler::create_user_thread(
-        "user-echo-main",
+        "user-lash-main",
         user_process,
         user_program.entry_point,
         user_program.user_stack_top,

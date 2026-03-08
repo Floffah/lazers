@@ -39,6 +39,15 @@ pub struct ProcessConfig {
     pub owned_pages: OwnedPages,
 }
 
+/// First-step child process launch failures surfaced to userspace.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpawnError {
+    InvalidPath,
+    FileNotFound,
+    InvalidExecutable,
+    ResourceUnavailable,
+}
+
 /// Resets the global scheduler state to an empty runtime.
 pub fn init() {
     with_scheduler_mut(|scheduler| scheduler.reset());
@@ -97,27 +106,39 @@ pub fn mark_idle_thread(thread_id: ThreadId) {
 
 /// Loads a child executable from the runtime root filesystem, runs it with
 /// inherited stdio, and blocks until it exits.
-pub fn spawn_user_process_and_wait(path: &str) -> Option<usize> {
-    let file = storage::read_root_file(path).ok()?;
+pub fn spawn_user_process_and_wait(path: &str) -> Result<usize, SpawnError> {
+    let file = match storage::read_root_file(path) {
+        Ok(file) => file,
+        Err(storage::StorageError::FileNotFound | storage::StorageError::NotAFile) => {
+            return Err(SpawnError::FileNotFound);
+        }
+        Err(storage::StorageError::PathNotAbsolute | storage::StorageError::InvalidShortName) => {
+            return Err(SpawnError::InvalidPath);
+        }
+        Err(_) => {
+            return Err(SpawnError::ResourceUnavailable);
+        }
+    };
     let program = match crate::memory::load_user_program(file.as_slice()) {
         Ok(program) => program,
         Err(_) => {
             file.release();
-            return None;
+            return Err(SpawnError::InvalidExecutable);
         }
     };
     file.release();
 
-    let current = with_scheduler(|scheduler| scheduler.current_thread)?;
+    let current = with_scheduler(|scheduler| scheduler.current_thread)
+        .ok_or(SpawnError::ResourceUnavailable)?;
     let child_process = match with_scheduler_mut(|scheduler| scheduler.spawn_child_process(current, program)) {
         Ok(process_id) => process_id,
         Err(program) => {
             program.owned_pages.release();
-            return None;
+            return Err(SpawnError::ResourceUnavailable);
         }
     };
 
-    wait_for_child(child_process)
+    wait_for_child(child_process).ok_or(SpawnError::ResourceUnavailable)
 }
 
 /// Transfers control from bootstrap code into the first runnable thread.

@@ -17,6 +17,10 @@ const SYS_WRITE: usize = 1;
 const SYS_YIELD: usize = 2;
 const SYS_EXIT: usize = 3;
 const SYS_SPAWN_WAIT: usize = 4;
+const SPAWN_ERROR_INVALID_PATH: usize = usize::MAX;
+const SPAWN_ERROR_FILE_NOT_FOUND: usize = usize::MAX - 1;
+const SPAWN_ERROR_INVALID_EXECUTABLE: usize = usize::MAX - 2;
+const SPAWN_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 3;
 
 global_asm!(include_str!("lib.asm"));
 
@@ -47,7 +51,10 @@ macro_rules! entry {
 
 /// First-step userspace spawn failures.
 pub enum SpawnError {
-    Rejected,
+    InvalidPath,
+    FileNotFound,
+    InvalidExecutable,
+    ResourceUnavailable,
 }
 
 /// Reads bytes from a process-owned descriptor into the provided buffer.
@@ -96,11 +103,13 @@ pub fn exit(code: usize) -> ! {
 /// Runs a child process from an absolute path and blocks until it exits.
 pub fn spawn_wait(path: &str) -> Result<usize, SpawnError> {
     let status = unsafe { user_syscall3(SYS_SPAWN_WAIT, path.as_ptr() as usize, path.len(), 0) };
-    if status == usize::MAX {
-        return Err(SpawnError::Rejected);
+    match status {
+        SPAWN_ERROR_INVALID_PATH => Err(SpawnError::InvalidPath),
+        SPAWN_ERROR_FILE_NOT_FOUND => Err(SpawnError::FileNotFound),
+        SPAWN_ERROR_INVALID_EXECUTABLE => Err(SpawnError::InvalidExecutable),
+        SPAWN_ERROR_RESOURCE_UNAVAILABLE => Err(SpawnError::ResourceUnavailable),
+        _ => Ok(status),
     }
-
-    Ok(status)
 }
 
 /// Writes one formatted string to standard output.

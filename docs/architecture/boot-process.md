@@ -14,7 +14,7 @@ QEMU is used only as the execution environment for that same path. The disk layo
 4. The loader captures framebuffer details, copies a normalized memory map, finds the ACPI RSDP if present, and allocates the initial kernel stack.
 5. The loader exits boot services.
 6. The loader jumps to the kernel entry with `rdi = BootInfo` and the stack switched to the allocated kernel stack.
-7. The kernel validates `BootInfo`, replaces the firmware page tables with kernel-owned page tables, initializes GDT/TSS/IDT state, renders the initial banner, discovers the AHCI controller, reads GPT, mounts the `LAZERS-SYSTEM` FAT32 partition as `/`, loads `/bin/echo` as a user ELF, and enters a cooperative scheduler with a kernel terminal thread plus one user echo process.
+7. The kernel validates `BootInfo`, replaces the firmware page tables with kernel-owned page tables, initializes GDT/TSS/IDT state, renders the initial banner, discovers the AHCI controller, reads GPT, mounts the `LAZERS-SYSTEM` FAT32 partition as `/`, loads `/bin/lash` as a user ELF, and enters a cooperative scheduler with a kernel terminal thread plus one user shell process.
 
 ## Contracts
 
@@ -30,6 +30,6 @@ QEMU is used only as the execution environment for that same path. The disk layo
 
 - BIOS boot
 - higher-half memory mapping
-- timer-driven preemption, SMP, or a userland shell
-- filesystem writes, VFAT long names, or `/bin/lash`
+- timer-driven preemption or SMP
+- filesystem writes or VFAT long names
 - QEMU-specific device handoff or firmware shortcuts
