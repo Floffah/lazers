@@ -30,18 +30,7 @@ use core::panic::PanicInfo;
 use boot_info::{BootInfo, PixelFormat};
 use memory::LoadedUserProgram;
 
-global_asm!(
-    r#"
-    .section .text._start,"ax"
-    .global _start
-_start:
-    cli
-    call kernel_main
-1:
-    hlt
-    jmp 1b
-"#
-);
+global_asm!(include_str!("main.asm"));
 
 #[no_mangle]
 /// First Rust entrypoint after the assembly `_start` shim.
@@ -114,7 +103,10 @@ fn pixel_format_name(format: PixelFormat) -> &'static str {
 pub(crate) fn halt_forever() -> ! {
     loop {
         unsafe {
-            asm!("hlt", options(nomem, nostack, preserves_flags));
+            asm!(
+                include_str!("halt_forever.main.asm"),
+                options(nomem, nostack, preserves_flags)
+            );
         }
     }
 }
@@ -160,7 +152,10 @@ fn terminal_thread_entry() -> ! {
 fn idle_thread_entry() -> ! {
     loop {
         unsafe {
-            asm!("pause", options(nomem, nostack, preserves_flags));
+            asm!(
+                include_str!("idle_thread_entry.main.asm"),
+                options(nomem, nostack, preserves_flags)
+            );
         }
         scheduler::yield_now();
     }

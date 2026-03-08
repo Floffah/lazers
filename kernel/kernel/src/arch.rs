@@ -22,92 +22,7 @@ const TRAP_PAGE_FAULT: u8 = 14;
 pub const TRAP_SYSCALL: u8 = 0x80;
 
 global_asm!(
-    r#"
-    .section .text.load_gdt_tss,"ax"
-    .global load_gdt_tss
-load_gdt_tss:
-    lgdt [rdi]
-    push {kcode}
-    lea rax, [rip + 1f]
-    push rax
-    retfq
-1:
-    mov ax, {kdata}
-    mov ds, ax
-    mov es, ax
-    mov ss, ax
-    xor eax, eax
-    mov fs, ax
-    mov gs, ax
-    mov ax, {tss}
-    ltr ax
-    ret
-
-    .section .text.trap_invalid_opcode,"ax"
-    .global trap_invalid_opcode
-trap_invalid_opcode:
-    push 0
-    push {vector_invalid}
-    jmp trap_common
-
-    .section .text.trap_general_protection,"ax"
-    .global trap_general_protection
-trap_general_protection:
-    push {vector_gp}
-    jmp trap_common
-
-    .section .text.trap_page_fault,"ax"
-    .global trap_page_fault
-trap_page_fault:
-    push {vector_pf}
-    jmp trap_common
-
-    .section .text.trap_syscall,"ax"
-    .global trap_syscall
-trap_syscall:
-    push 0
-    push {vector_syscall}
-    jmp trap_common
-
-    .section .text.trap_common,"ax"
-    .global trap_common
-trap_common:
-    cld
-    push r15
-    push r14
-    push r13
-    push r12
-    push r11
-    push r10
-    push r9
-    push r8
-    push rsi
-    push rdi
-    push rbp
-    push rdx
-    push rcx
-    push rbx
-    push rax
-    mov rdi, rsp
-    call rust_trap_entry
-    pop rax
-    pop rbx
-    pop rcx
-    pop rdx
-    pop rbp
-    pop rdi
-    pop rsi
-    pop r8
-    pop r9
-    pop r10
-    pop r11
-    pop r12
-    pop r13
-    pop r14
-    pop r15
-    add rsp, 16
-    iretq
-"#,
+    include_str!("arch.asm"),
     kcode = const KERNEL_CODE_SELECTOR,
     kdata = const KERNEL_DATA_SELECTOR,
     tss = const TSS_SELECTOR,
@@ -153,7 +68,11 @@ pub fn activate_address_space(space: AddressSpace, kernel_stack_top: u64) {
 /// Loads a new page-table root into CR3.
 pub fn load_page_table(root_paddr: u64) {
     unsafe {
-        asm!("mov cr3, {}", in(reg) root_paddr, options(nostack, preserves_flags));
+        asm!(
+            include_str!("load_page_table.arch.asm"),
+            in(reg) root_paddr,
+            options(nostack, preserves_flags)
+        );
     }
 }
 
@@ -172,15 +91,7 @@ pub fn set_kernel_stack_top(stack_top: u64) {
 pub fn enter_user_mode(entry_point: u64, user_stack_top: u64) -> ! {
     unsafe {
         asm!(
-            "mov ax, {user_data}",
-            "mov ds, ax",
-            "mov es, ax",
-            "push {user_data}",
-            "push rsi",
-            "push 0x202",
-            "push {user_code}",
-            "push rdi",
-            "iretq",
+            include_str!("enter_user_mode.arch.asm"),
             user_data = const ((USER_DATA_SELECTOR | 0x3) as u64),
             user_code = const ((USER_CODE_SELECTOR | 0x3) as u64),
             in("rdi") entry_point,
@@ -194,7 +105,11 @@ pub fn enter_user_mode(entry_point: u64, user_stack_top: u64) -> ! {
 pub fn read_cr2() -> u64 {
     let value: u64;
     unsafe {
-        asm!("mov {}, cr2", out(reg) value, options(nostack, preserves_flags));
+        asm!(
+            include_str!("read_cr2.arch.asm"),
+            out(reg) value,
+            options(nostack, preserves_flags)
+        );
     }
     value
 }
@@ -232,7 +147,11 @@ pub extern "C" fn rust_trap_entry(frame: &mut TrapFrame) {
 fn load_idt() {
     let pointer = with_arch(|arch| arch.idt_pointer());
     unsafe {
-        asm!("lidt [{}]", in(reg) &pointer, options(readonly, nostack, preserves_flags));
+        asm!(
+            include_str!("load_idt.arch.asm"),
+            in(reg) &pointer,
+            options(readonly, nostack, preserves_flags)
+        );
     }
 }
 

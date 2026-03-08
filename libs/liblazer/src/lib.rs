@@ -17,41 +17,7 @@ const SYS_WRITE: usize = 1;
 const SYS_YIELD: usize = 2;
 const SYS_EXIT: usize = 3;
 
-global_asm!(
-    r#"
-    .section .text._start,"ax"
-    .global _start
-_start:
-    call __liblazer_main
-1:
-    jmp 1b
-
-    .section .text.user_syscall0,"ax"
-    .global user_syscall0
-user_syscall0:
-    mov rax, rdi
-    int 0x80
-    ret
-
-    .section .text.user_syscall1,"ax"
-    .global user_syscall1
-user_syscall1:
-    mov rax, rdi
-    mov rdi, rsi
-    int 0x80
-    ret
-
-    .section .text.user_syscall3,"ax"
-    .global user_syscall3
-user_syscall3:
-    mov rax, rdi
-    mov rdi, rsi
-    mov rsi, rdx
-    mov rdx, rcx
-    int 0x80
-    ret
-"#
-);
+global_asm!(include_str!("lib.asm"));
 
 unsafe extern "C" {
     fn user_syscall0(number: usize) -> usize;

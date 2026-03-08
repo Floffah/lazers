@@ -334,7 +334,7 @@ impl EventQueue {
 unsafe fn inb(port: u16) -> u8 {
     let value: u8;
     asm!(
-        "in al, dx",
+        include_str!("inb.keyboard.asm"),
         in("dx") port,
         out("al") value,
         options(nomem, nostack, preserves_flags)

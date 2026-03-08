@@ -146,7 +146,7 @@ fn pci_config_address(location: PciDeviceLocation, offset: u8) -> u32 {
 unsafe fn inl(port: u16) -> u32 {
     let value: u32;
     asm!(
-        "in eax, dx",
+        include_str!("inl.pci.asm"),
         out("eax") value,
         in("dx") port,
         options(nomem, nostack, preserves_flags)
@@ -156,7 +156,7 @@ unsafe fn inl(port: u16) -> u32 {
 
 unsafe fn outl(port: u16, value: u32) {
     asm!(
-        "out dx, eax",
+        include_str!("outl.pci.asm"),
         in("dx") port,
         in("eax") value,
         options(nomem, nostack, preserves_flags)

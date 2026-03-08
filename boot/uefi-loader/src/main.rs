@@ -236,11 +236,7 @@ fn align_up(value: u64, align: u64) -> u64 {
 
 unsafe fn jump_to_kernel(entry_point: u64, boot_info: *const BootInfo, stack_top: u64) -> ! {
     asm!(
-        "cli",
-        "mov rsp, {stack_top}",
-        "xor rbp, rbp",
-        "mov rdi, {boot_info}",
-        "jmp {entry_point}",
+        include_str!("jump_to_kernel.main.asm"),
         stack_top = in(reg) stack_top,
         boot_info = in(reg) boot_info,
         entry_point = in(reg) entry_point,
