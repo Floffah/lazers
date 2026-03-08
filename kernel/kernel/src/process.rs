@@ -1,10 +1,18 @@
+//! Process resource ownership and stdio-backed I/O.
+//!
+//! In the current runtime, a process is the unit that owns an address space,
+//! handle table, and standard streams. Threads execute within a process, but
+//! they do not duplicate these resources.
+
 use crate::io::{HandleId, KernelObject, StdioHandles, MAX_PROCESS_HANDLES};
 use crate::memory::AddressSpace;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Opaque scheduler-assigned identifier for a process slot.
 pub struct ProcessId(pub usize);
 
 #[derive(Clone, Copy)]
+/// Process metadata and owned resources.
 pub struct Process {
     #[allow(dead_code)]
     id: ProcessId,
@@ -16,6 +24,7 @@ pub struct Process {
 }
 
 impl Process {
+    /// Creates an empty process container with no installed handles.
     pub const fn new(id: ProcessId, name: &'static str, address_space: AddressSpace) -> Self {
         Self {
             id,
@@ -26,6 +35,8 @@ impl Process {
         }
     }
 
+    /// Installs a kernel object into the first free slot of the process handle
+    /// table and returns the local handle id for that slot.
     pub fn install_handle(&mut self, object: KernelObject) -> Option<HandleId> {
         let mut index = 0;
         while index < self.handles.len() {
@@ -39,14 +50,21 @@ impl Process {
         None
     }
 
+    /// Replaces the process' standard stream bindings.
     pub fn set_stdio(&mut self, stdio: StdioHandles) {
         self.stdio = stdio;
     }
 
+    /// Returns the address space that should be activated for this process'
+    /// threads.
     pub const fn address_space(&self) -> AddressSpace {
         self.address_space
     }
 
+    /// Reads bytes from one of the process' standard streams.
+    ///
+    /// Only `stdin`, `stdout`, and `stderr` are meaningful file descriptor
+    /// numbers at this stage. Unsupported descriptors behave like empty input.
     pub fn read(&self, fd: usize, buffer: &mut [u8]) -> usize {
         let Some(object) = self.resolve_fd(fd) else {
             return 0;
@@ -63,6 +81,7 @@ impl Process {
         read
     }
 
+    /// Writes bytes to one of the process' standard streams.
     pub fn write(&self, fd: usize, buffer: &[u8]) -> usize {
         let Some(object) = self.resolve_fd(fd) else {
             return 0;

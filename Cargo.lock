@@ -25,20 +25,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
-name = "lazers-elf"
+name = "echo"
 version = "0.1.0"
 
 [[package]]
-name = "lazers-kernel"
+name = "elf"
+version = "0.1.0"
+
+[[package]]
+name = "kernel"
 version = "0.1.0"
 dependencies = [
  "boot-info",
- "lazers-elf",
+ "elf",
 ]
-
-[[package]]
-name = "lazers-user-echo"
-version = "0.1.0"
 
 [[package]]
 name = "log"
@@ -125,7 +125,7 @@ name = "uefi-loader"
 version = "0.1.0"
 dependencies = [
  "boot-info",
- "lazers-elf",
+ "elf",
  "uefi",
 ]
 

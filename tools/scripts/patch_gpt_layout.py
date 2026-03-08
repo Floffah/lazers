@@ -8,6 +8,12 @@ import sys
 SECTOR_SIZE = 512
 GPT_SIGNATURE = b"EFI PART"
 EFI_SYSTEM_GUID_BYTES = bytes.fromhex("28732ac11ff8d211ba4b00a0c93ec93b")
+MICROSOFT_BASIC_DATA_GUID_BYTES = bytes.fromhex("a2a0d0ebe5b9334487c068b6b72699c7")
+
+PARTITION_NAMES = (
+    "LAZERS-ESP",
+    "LAZERS-SYSTEM",
+)
 
 
 def read_header(image, lba):
@@ -22,19 +28,33 @@ def read_header(image, lba):
     return header, header_size, table_lba, entry_count, entry_size
 
 
+def encode_partition_name(name: str) -> bytes:
+    encoded = name.encode("utf-16-le")
+    if len(encoded) > 72:
+        raise RuntimeError(f"partition name too long: {name}")
+    return encoded + bytes(72 - len(encoded))
+
+
 def update_table(image, table_lba, entry_count, entry_size):
     table_size = entry_count * entry_size
     image.seek(table_lba * SECTOR_SIZE)
     table = bytearray(image.read(table_size))
 
+    populated = []
     for index in range(entry_count):
         entry_offset = index * entry_size
         type_guid = table[entry_offset : entry_offset + 16]
         if any(type_guid):
-            table[entry_offset : entry_offset + 16] = EFI_SYSTEM_GUID_BYTES
-            break
-    else:
-        raise RuntimeError("no populated GPT partition entry found to convert to EFI System Partition")
+            populated.append(entry_offset)
+
+    if len(populated) < 2:
+        raise RuntimeError("expected at least two populated GPT partition entries")
+
+    table[populated[0] : populated[0] + 16] = EFI_SYSTEM_GUID_BYTES
+    table[populated[0] + 56 : populated[0] + 128] = encode_partition_name(PARTITION_NAMES[0])
+
+    table[populated[1] : populated[1] + 16] = MICROSOFT_BASIC_DATA_GUID_BYTES
+    table[populated[1] + 56 : populated[1] + 128] = encode_partition_name(PARTITION_NAMES[1])
 
     image.seek(table_lba * SECTOR_SIZE)
     image.write(table)
@@ -54,7 +74,7 @@ def update_header(image, header_lba):
 
 def main() -> int:
     if len(sys.argv) != 2:
-        print("usage: patch_gpt_esp.py <raw-image>", file=sys.stderr)
+        print("usage: patch_gpt_layout.py <raw-image>", file=sys.stderr)
         return 1
 
     image_path = sys.argv[1]

@@ -51,9 +51,11 @@ The repository now implements the first bootable path as:
 - a UEFI loader built as `BOOTX64.EFI`
 - a freestanding `ELF64` kernel image
 - a shared boot information contract between the loader and kernel
-- a raw GPT disk image with a FAT32 EFI System Partition
+- a raw GPT disk image with:
+  - a `FAT32` EFI System Partition that holds `BOOTX64.EFI` and `kernel.elf`
+  - a `FAT32` system partition that is mounted as `/` and stages `/bin/echo`
 
-The current success condition is still intentionally narrow: the loader exits boot services, the kernel takes control, replaces the firmware page tables, brings up the first syscall path, and runs one embedded user-mode text program through the terminal/stdin/stdout architecture that future userland programs will reuse.
+The current success condition is still intentionally narrow: the loader exits boot services, the kernel takes control, replaces the firmware page tables, mounts the system partition, and runs one disk-backed user-mode text program through the terminal/stdin/stdout architecture that future userland programs will reuse.
 
 ## Host Notes
 

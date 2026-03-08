@@ -1,8 +1,15 @@
+//! Physical-page allocation, address-space construction, and user ELF loading.
+//!
+//! The current memory model is intentionally direct: the kernel owns page-table
+//! construction, keeps an identity-mapped physical window for kernel use, and
+//! loads user programs into a fixed low virtual layout. That is enough to bring
+//! up user mode without committing to a final higher-level VM design yet.
+
 use boot_info::{BootInfo, MemoryRegionKind};
 use core::cell::UnsafeCell;
 use core::ptr::{copy_nonoverlapping, write_bytes};
 use core::slice;
-use lazers_elf::{ElfError, ElfImage, PF_W, PT_LOAD};
+use elf::{ElfError, ElfImage, PF_W, PT_LOAD};
 
 pub const PAGE_SIZE: usize = 4096;
 pub const USER_IMAGE_BASE: u64 = 0x0000_0000_0040_0000;
@@ -21,6 +28,7 @@ const PHYS_WINDOW_START: u64 = 0x0000_0000_0100_0000;
 static MEMORY: MemoryCell = MemoryCell::new();
 
 #[derive(Clone, Copy)]
+/// Page-table root for either the kernel or a user process.
 pub struct AddressSpace {
     root_paddr: u64,
 }
@@ -36,6 +44,7 @@ impl AddressSpace {
 }
 
 #[derive(Clone, Copy)]
+/// Result of loading one user ELF into a newly created address space.
 pub struct LoadedUserProgram {
     pub address_space: AddressSpace,
     pub entry_point: u64,
@@ -43,21 +52,25 @@ pub struct LoadedUserProgram {
 }
 
 #[derive(Clone, Copy, Debug)]
+/// Errors raised while building page tables or loading a user image.
 pub enum MemoryError {
     NoUsableMemory,
     AddressSpaceUninitialized,
     AllocatorExhausted,
+    InvalidKernelBufferSize,
     Elf(ElfError),
     UserImageOutOfRange,
     SegmentOverlapCapacityExceeded,
 }
 
 impl MemoryError {
+    /// Returns a short static description suitable for panic and boot output.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::NoUsableMemory => "no usable physical memory is available",
             Self::AddressSpaceUninitialized => "kernel address space is not initialized",
             Self::AllocatorExhausted => "physical page allocator is exhausted",
+            Self::InvalidKernelBufferSize => "kernel buffer size is invalid",
             Self::Elf(error) => elf_error_as_str(error),
             Self::UserImageOutOfRange => "user image falls outside the fixed user layout",
             Self::SegmentOverlapCapacityExceeded => "user image mapping capacity is exhausted",
@@ -65,6 +78,12 @@ impl MemoryError {
     }
 }
 
+/// Initializes the kernel allocator and installs the first kernel-owned page
+/// table.
+///
+/// The resulting kernel address space identity-maps a physical window covering
+/// all usable memory reported by the loader, plus the framebuffer if it lies
+/// outside that window.
 pub fn init(boot_info: &BootInfo) -> Result<(), MemoryError> {
     with_state_mut(|state| {
         state.initialize_allocator(boot_info)?;
@@ -98,6 +117,7 @@ pub fn init(boot_info: &BootInfo) -> Result<(), MemoryError> {
     Ok(())
 }
 
+/// Returns the kernel's canonical address space.
 pub fn kernel_address_space() -> AddressSpace {
     with_state(|state| {
         state
@@ -106,6 +126,48 @@ pub fn kernel_address_space() -> AddressSpace {
     })
 }
 
+/// Allocates a zeroed, contiguous kernel buffer backed by physical pages.
+///
+/// This is primarily used by bootstrap subsystems such as storage that need a
+/// stable scratch buffer without yet having a general kernel heap.
+pub fn allocate_kernel_buffer(size: usize) -> Result<&'static mut [u8], MemoryError> {
+    if size == 0 {
+        return Err(MemoryError::InvalidKernelBufferSize);
+    }
+
+    let page_count = align_up(size as u64, PAGE_SIZE as u64) / PAGE_SIZE as u64;
+    let start = with_state_mut(|state| state.allocate_contiguous_pages(page_count as usize))?;
+    Ok(unsafe { slice::from_raw_parts_mut(start as *mut u8, size) })
+}
+
+/// Allocates one zeroed physical page for kernel-owned structures.
+pub fn allocate_kernel_page() -> Result<u64, MemoryError> {
+    with_state_mut(|state| state.allocate_page())
+}
+
+/// Extends the active kernel address space with an identity-mapped region.
+///
+/// This is used for MMIO ranges discovered after the initial paging setup, such
+/// as the AHCI controller's ABAR region.
+pub fn map_kernel_identity_range(start: u64, end: u64, writable: bool) -> Result<(), MemoryError> {
+    let flags = PAGE_PRESENT | if writable { PAGE_WRITABLE } else { 0 };
+    with_state_mut(|state| {
+        let kernel_space = state
+            .kernel_space
+            .ok_or(MemoryError::AddressSpaceUninitialized)?;
+        let mut builder = AddressSpaceBuilder::new(kernel_space.root_paddr());
+        builder.map_identity_4k_range(start, end, flags)
+    })?;
+
+    crate::arch::load_page_table(kernel_address_space().root_paddr());
+    Ok(())
+}
+
+/// Parses and maps one user ELF into a fresh user address space.
+///
+/// The loader reuses the shared ELF parser but owns the paging policy: loadable
+/// segments must fit inside the fixed user image range, and a fixed user stack
+/// is appended above them.
 pub fn load_user_program(bytes: &[u8]) -> Result<LoadedUserProgram, MemoryError> {
     let elf = ElfImage::parse(bytes).map_err(MemoryError::Elf)?;
     let entry_point = elf.entry_point();
@@ -203,6 +265,8 @@ pub fn load_user_program(bytes: &[u8]) -> Result<LoadedUserProgram, MemoryError>
     })
 }
 
+/// Validates that a user buffer lies entirely within the currently supported
+/// user virtual address ranges.
 pub fn validate_user_buffer(address: u64, len: usize) -> bool {
     if len == 0 {
         return true;
@@ -216,6 +280,7 @@ pub fn validate_user_buffer(address: u64, len: usize) -> bool {
     address >= USER_IMAGE_BASE && end <= USER_STACK_TOP && !(end > user_stack_base && address < user_stack_base)
 }
 
+/// Borrows an immutable slice from a validated user virtual address range.
 pub fn user_slice<'a>(address: u64, len: usize) -> Option<&'a [u8]> {
     if !validate_user_buffer(address, len) {
         return None;
@@ -224,6 +289,7 @@ pub fn user_slice<'a>(address: u64, len: usize) -> Option<&'a [u8]> {
     Some(unsafe { slice::from_raw_parts(address as *const u8, len) })
 }
 
+/// Borrows a mutable slice from a validated user virtual address range.
 pub fn user_slice_mut<'a>(address: u64, len: usize) -> Option<&'a mut [u8]> {
     if !validate_user_buffer(address, len) {
         return None;
@@ -329,6 +395,10 @@ impl MemoryState {
     fn allocate_page(&mut self) -> Result<u64, MemoryError> {
         self.allocator.allocate_page()
     }
+
+    fn allocate_contiguous_pages(&mut self, count: usize) -> Result<u64, MemoryError> {
+        self.allocator.allocate_contiguous_pages(count)
+    }
 }
 
 struct PhysicalAllocator {
@@ -373,6 +443,22 @@ impl PhysicalAllocator {
 
         Err(MemoryError::AllocatorExhausted)
     }
+
+    fn allocate_contiguous_pages(&mut self, count: usize) -> Result<u64, MemoryError> {
+        let mut index = 0;
+        while index < self.count {
+            let region = &mut self.regions[index];
+            if let Some(start) = region.allocate_contiguous_pages(count) {
+                unsafe {
+                    write_bytes(start as *mut u8, 0, count * PAGE_SIZE);
+                }
+                return Ok(start);
+            }
+            index += 1;
+        }
+
+        Err(MemoryError::AllocatorExhausted)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -401,6 +487,22 @@ impl PhysicalRegion {
             return None;
         }
         Some(page)
+    }
+
+    fn allocate_contiguous_pages(&mut self, count: usize) -> Option<u64> {
+        if count == 0 || self.next == 0 || self.next >= self.end {
+            return None;
+        }
+
+        let bytes = (count as u64).checked_mul(PAGE_SIZE as u64)?;
+        let end = self.next.checked_add(bytes)?;
+        if end > self.end {
+            return None;
+        }
+
+        let start = self.next;
+        self.next = end;
+        Some(start)
     }
 }
 

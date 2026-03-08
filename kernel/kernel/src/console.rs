@@ -1,3 +1,10 @@
+//! Framebuffer-backed text console used for boot output, panic screens, and the
+//! first terminal surface.
+//!
+//! This console is intentionally simple: fixed-width glyphs, fixed colors,
+//! wrapping and scrolling, and a small amount of terminal-session state so
+//! backspace cannot erase the boot banner above the active input region.
+
 use boot_info::{FramebufferInfo, PixelFormat};
 use core::cell::UnsafeCell;
 use core::fmt;
@@ -38,6 +45,7 @@ pub struct FramebufferConsole {
 }
 
 impl FramebufferConsole {
+    /// Creates a console over a validated direct-color framebuffer.
     pub fn new(framebuffer: FramebufferInfo, foreground: u32, background: u32) -> Self {
         let visible_height = visible_height_pixels(framebuffer);
         let columns = usable_columns(framebuffer.width as usize);
@@ -57,6 +65,7 @@ impl FramebufferConsole {
         }
     }
 
+    /// Clears the visible framebuffer and resets cursor/session state.
     pub fn clear(&mut self) {
         let pixel = self.encode_color(self.background);
         let pixels = self.pixels_mut();
@@ -73,16 +82,24 @@ impl FramebufferConsole {
         self.input_floor = None;
     }
 
+    /// Writes ordinary UTF-8 text by routing each byte through the terminal
+    /// byte path.
+    ///
+    /// Unsupported bytes are handled by the glyph layer rather than here.
     pub fn write_str(&mut self, text: &str) {
         for byte in text.bytes() {
             self.write_terminal_byte(byte);
         }
     }
 
+    /// Marks the current cursor location as the lowest row/column a terminal
+    /// session may backspace into.
     pub fn begin_terminal_session(&mut self) {
         self.input_floor = Some(self.cursor());
     }
 
+    /// Interprets one terminal byte, including the minimal control set currently
+    /// supported by the text runtime.
     pub fn write_terminal_byte(&mut self, byte: u8) {
         match byte {
             b'\n' => self.new_line(),

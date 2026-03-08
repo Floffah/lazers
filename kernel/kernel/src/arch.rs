@@ -1,3 +1,10 @@
+//! x86_64 architecture support for segmentation, traps, page-table activation,
+//! and user-mode entry.
+//!
+//! This module owns the low-level CPU contracts that the higher-level runtime
+//! relies on: switching CR3, loading the GDT/TSS/IDT, entering ring 3, and
+//! reflecting traps back into Rust code.
+
 use core::arch::{asm, global_asm};
 use core::cell::UnsafeCell;
 
@@ -133,23 +140,35 @@ pub fn init() {
     load_idt();
 }
 
+/// Activates the target address space and kernel stack for the next thread.
+///
+/// The scheduler calls this before every context switch so the CPU will use the
+/// correct CR3 and ring-0 stack when the next thread traps back into the
+/// kernel.
 pub fn activate_address_space(space: AddressSpace, kernel_stack_top: u64) {
     set_kernel_stack_top(kernel_stack_top);
     load_page_table(space.root_paddr());
 }
 
+/// Loads a new page-table root into CR3.
 pub fn load_page_table(root_paddr: u64) {
     unsafe {
         asm!("mov cr3, {}", in(reg) root_paddr, options(nostack, preserves_flags));
     }
 }
 
+/// Updates the ring-0 stack pointer stored in the TSS.
 pub fn set_kernel_stack_top(stack_top: u64) {
     with_arch_mut(|arch| {
         arch.tss.rsp0 = stack_top;
     });
 }
 
+/// Performs the first transition of a thread from kernel mode into ring 3.
+///
+/// The scheduler prepares the user entry point and stack top ahead of time; this
+/// function builds the minimal `iretq` frame needed to begin executing that
+/// user thread.
 pub fn enter_user_mode(entry_point: u64, user_stack_top: u64) -> ! {
     unsafe {
         asm!(
@@ -171,6 +190,7 @@ pub fn enter_user_mode(entry_point: u64, user_stack_top: u64) -> ! {
     }
 }
 
+/// Reads CR2, primarily for page-fault diagnostics.
 pub fn read_cr2() -> u64 {
     let value: u64;
     unsafe {
@@ -180,6 +200,8 @@ pub fn read_cr2() -> u64 {
 }
 
 #[no_mangle]
+/// Handles all trap entrypoints after the assembly prologue has saved the
+/// register frame.
 pub extern "C" fn rust_trap_entry(frame: &mut TrapFrame) {
     match frame.vector as u8 {
         TRAP_SYSCALL => crate::syscall::dispatch(frame),

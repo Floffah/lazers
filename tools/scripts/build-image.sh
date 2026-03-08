@@ -4,11 +4,16 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD_DIR="$ROOT_DIR/build"
 IMAGE_PATH="$BUILD_DIR/lazers.img"
-MOUNT_POINT="/Volumes/LAZERS"
+ESP_MOUNT_POINT="/Volumes/LAZERSESP"
+SYSTEM_MOUNT_POINT="/Volumes/LAZERSSYS"
 LOADER_PATH="$ROOT_DIR/target/x86_64-unknown-uefi/release/uefi-loader.efi"
-KERNEL_PATH="$ROOT_DIR/target/x86_64-unknown-none/release/lazers-kernel"
-IMAGE_SIZE="64m"
-VOLUME_NAME="LAZERS"
+KERNEL_PATH="$ROOT_DIR/target/x86_64-unknown-none/release/kernel"
+USER_ECHO_PATH="$ROOT_DIR/build/echo"
+IMAGE_SIZE="256m"
+ESP_VOLUME_NAME="LAZERSESP"
+SYSTEM_VOLUME_NAME="LAZERSSYS"
+ESP_SIZE="64m"
+SYSTEM_SIZE="R"
 
 if [[ ! -f "$LOADER_PATH" ]]; then
   echo "missing loader binary at $LOADER_PATH" >&2
@@ -17,6 +22,11 @@ fi
 
 if [[ ! -f "$KERNEL_PATH" ]]; then
   echo "missing kernel binary at $KERNEL_PATH" >&2
+  exit 1
+fi
+
+if [[ ! -f "$USER_ECHO_PATH" ]]; then
+  echo "missing user binary at $USER_ECHO_PATH" >&2
   exit 1
 fi
 
@@ -48,19 +58,33 @@ if [[ -z "$DEVICE" ]]; then
   exit 1
 fi
 
-diskutil partitionDisk "$DEVICE" GPT FAT32 "$VOLUME_NAME" 100% >/dev/null
+diskutil partitionDisk \
+  "$DEVICE" \
+  GPT \
+  FAT32 "$ESP_VOLUME_NAME" "$ESP_SIZE" \
+  FAT32 "$SYSTEM_VOLUME_NAME" "$SYSTEM_SIZE" >/dev/null
 
-PARTITION="${DEVICE}s1"
-if [[ ! -d "$MOUNT_POINT" ]]; then
-  echo "expected mounted volume at $MOUNT_POINT" >&2
+ESP_PARTITION="${DEVICE}s1"
+SYSTEM_PARTITION="${DEVICE}s2"
+if [[ ! -d "$ESP_MOUNT_POINT" ]]; then
+  echo "expected mounted ESP volume at $ESP_MOUNT_POINT" >&2
   exit 1
 fi
 
-mkdir -p "$MOUNT_POINT/EFI/BOOT" "$MOUNT_POINT/lazers"
-cp "$LOADER_PATH" "$MOUNT_POINT/EFI/BOOT/BOOTX64.EFI"
-cp "$KERNEL_PATH" "$MOUNT_POINT/lazers/kernel.elf"
+if [[ ! -d "$SYSTEM_MOUNT_POINT" ]]; then
+  echo "expected mounted system volume at $SYSTEM_MOUNT_POINT" >&2
+  exit 1
+fi
+
+mkdir -p "$ESP_MOUNT_POINT/EFI/BOOT" "$ESP_MOUNT_POINT/lazers"
+cp "$LOADER_PATH" "$ESP_MOUNT_POINT/EFI/BOOT/BOOTX64.EFI"
+cp "$KERNEL_PATH" "$ESP_MOUNT_POINT/lazers/kernel.elf"
+
+mkdir -p "$SYSTEM_MOUNT_POINT/BIN"
+cp "$USER_ECHO_PATH" "$SYSTEM_MOUNT_POINT/BIN/ECHO"
 sync
-diskutil unmount "$PARTITION" >/dev/null
-python3 "$ROOT_DIR/tools/scripts/patch_gpt_esp.py" "$IMAGE_PATH"
+diskutil unmount "$ESP_PARTITION" >/dev/null
+diskutil unmount "$SYSTEM_PARTITION" >/dev/null
+python3 "$ROOT_DIR/tools/scripts/patch_gpt_layout.py" "$IMAGE_PATH"
 
 echo "created $IMAGE_PATH"

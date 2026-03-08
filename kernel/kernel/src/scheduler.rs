@@ -1,3 +1,10 @@
+//! Cooperative scheduler and bootstrap process/thread creation.
+//!
+//! The scheduler owns the runnable thread set, their kernel stacks, and the
+//! activation data needed to switch address spaces before resuming execution.
+//! It is intentionally single-core and cooperative for now: threads switch only
+//! at explicit yield/block points.
+
 use core::arch::global_asm;
 use core::cell::UnsafeCell;
 
@@ -45,20 +52,25 @@ unsafe extern "C" {
 }
 
 #[derive(Clone, Copy)]
+/// Process creation inputs for the bootstrap runtime.
 pub struct ProcessConfig {
     pub name: &'static str,
     pub address_space: AddressSpace,
     pub terminal_endpoint: Option<&'static TerminalEndpoint>,
 }
 
+/// Resets the global scheduler state to an empty runtime.
 pub fn init() {
     with_scheduler_mut(|scheduler| scheduler.reset());
 }
 
+/// Creates a process and installs its initial stdio bindings if a terminal
+/// endpoint was supplied.
 pub fn create_process(config: ProcessConfig) -> ProcessId {
     with_scheduler_mut(|scheduler| scheduler.create_process(config))
 }
 
+/// Creates a kernel-mode thread owned by an existing process.
 pub fn create_kernel_thread(
     name: &'static str,
     process_id: ProcessId,
@@ -69,6 +81,7 @@ pub fn create_kernel_thread(
     })
 }
 
+/// Creates a user-mode thread owned by an existing process.
 pub fn create_user_thread(
     name: &'static str,
     process_id: ProcessId,
@@ -87,12 +100,18 @@ pub fn create_user_thread(
     })
 }
 
+/// Marks a previously created thread as the scheduler's idle fallback.
 pub fn mark_idle_thread(thread_id: ThreadId) {
     with_scheduler_mut(|scheduler| {
         scheduler.idle_thread = Some(thread_id);
     });
 }
 
+/// Transfers control from bootstrap code into the first runnable thread.
+///
+/// This does not return. The scheduler selects an initial thread, activates its
+/// address space and kernel stack, and then jumps into the assembly context
+/// switcher using the bootstrap context as the synthetic "current" thread.
 pub fn start() -> ! {
     let next = with_scheduler_mut(|scheduler| {
         let Some(thread_id) = scheduler.next_runnable_thread(None) else {
@@ -118,6 +137,7 @@ pub fn start() -> ! {
     crate::halt_forever()
 }
 
+/// Cooperatively yields the CPU to another runnable thread if one exists.
 pub fn yield_now() {
     let switch = with_scheduler_mut(|scheduler| scheduler.prepare_switch(false));
     let Some(switch) = switch else {
@@ -130,6 +150,10 @@ pub fn yield_now() {
     }
 }
 
+/// Blocks the current thread and schedules a replacement.
+///
+/// This is used by fatal user-thread conditions and explicit exits until a
+/// fuller wakeup and process-lifecycle model exists.
 pub fn block_current_thread_and_schedule() -> ! {
     let switch = with_scheduler_mut(|scheduler| scheduler.prepare_switch(true));
     let Some(switch) = switch else {
@@ -144,14 +168,20 @@ pub fn block_current_thread_and_schedule() -> ! {
     crate::halt_forever()
 }
 
+/// Reads from the current thread's process-owned standard streams.
 pub fn current_process_read(fd: usize, buffer: &mut [u8]) -> usize {
     with_current_process(|process| process.read(fd, buffer)).unwrap_or(0)
 }
 
+/// Writes to the current thread's process-owned standard streams.
 pub fn current_process_write(fd: usize, buffer: &[u8]) -> usize {
     with_current_process(|process| process.write(fd, buffer)).unwrap_or(0)
 }
 
+/// Dispatches the current thread's configured start contract.
+///
+/// Kernel threads jump to a Rust entrypoint, while user threads transition
+/// through the architecture layer into ring 3.
 pub fn run_current_thread_start() -> ! {
     let start = with_scheduler(|scheduler| {
         let current = scheduler.current_thread.expect("no current thread");

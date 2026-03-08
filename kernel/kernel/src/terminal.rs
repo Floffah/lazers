@@ -1,3 +1,9 @@
+//! Terminal endpoint queues and fullscreen terminal surface glue.
+//!
+//! The endpoint is the byte-stream object that processes talk to through stdio.
+//! The surface is the hardware-facing side that turns keyboard events into input
+//! bytes and drains output bytes into the framebuffer console.
+
 use core::cell::UnsafeCell;
 
 use crate::console;
@@ -8,29 +14,38 @@ const TERMINAL_OUTPUT_CAPACITY: usize = 1024;
 
 static PRIMARY_TERMINAL_ENDPOINT: TerminalEndpoint = TerminalEndpoint::new();
 
+/// Bidirectional byte queues for one interactive text session.
+///
+/// Kernel services and user processes share this object indirectly through
+/// process handles rather than talking to the framebuffer or keyboard directly.
 pub struct TerminalEndpoint {
     state: UnsafeCell<TerminalEndpointState>,
 }
 
 impl TerminalEndpoint {
+    /// Creates an empty endpoint with fixed-size input and output queues.
     pub const fn new() -> Self {
         Self {
             state: UnsafeCell::new(TerminalEndpointState::new()),
         }
     }
 
+    /// Pushes one translated input byte for the foreground program.
     pub fn push_input_byte(&self, byte: u8) -> bool {
         unsafe { (*self.state.get()).input.push(byte) }
     }
 
+    /// Pops one pending input byte for a reader attached through stdio.
     pub fn pop_input_byte(&self) -> Option<u8> {
         unsafe { (*self.state.get()).input.pop() }
     }
 
+    /// Pushes one output byte emitted by a program.
     pub fn push_output_byte(&self, byte: u8) -> bool {
         unsafe { (*self.state.get()).output.push(byte) }
     }
 
+    /// Pops one pending output byte for presentation on the framebuffer.
     pub fn pop_output_byte(&self) -> Option<u8> {
         unsafe { (*self.state.get()).output.pop() }
     }
@@ -38,25 +53,31 @@ impl TerminalEndpoint {
 
 unsafe impl Sync for TerminalEndpoint {}
 
+/// Fullscreen presentation layer for the primary terminal session.
 pub struct TerminalSurface {
     endpoint: &'static TerminalEndpoint,
 }
 
 impl TerminalSurface {
+    /// Binds the surface to the endpoint it should render and feed.
     pub const fn new(endpoint: &'static TerminalEndpoint) -> Self {
         Self { endpoint }
     }
 
+    /// Marks the current console cursor position as the start of interactive
+    /// terminal output.
     pub fn begin_session(&self) {
         console::begin_terminal_session();
     }
 
+    /// Converts one keyboard event into terminal input bytes when appropriate.
     pub fn handle_key_event(&self, event: KeyEvent) {
         if let Some(byte) = key_event_to_input_byte(event) {
             let _ = self.endpoint.push_input_byte(byte);
         }
     }
 
+    /// Drains any pending terminal output bytes into the framebuffer console.
     pub fn flush_output(&self) {
         while let Some(byte) = self.endpoint.pop_output_byte() {
             console::write_terminal_byte(byte);
@@ -64,6 +85,7 @@ impl TerminalSurface {
     }
 }
 
+/// Returns the single bootstrap terminal endpoint used by the early system.
 pub fn primary_endpoint() -> &'static TerminalEndpoint {
     &PRIMARY_TERMINAL_ENDPOINT
 }

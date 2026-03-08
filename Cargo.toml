@@ -2,10 +2,10 @@
 resolver = "2"
 members = [
     "boot/uefi-loader",
-    "kernel/lazers-kernel",
+    "kernel/kernel",
     "libs/boot-info",
-    "libs/lazers-elf",
-    "user/lazers-user-echo",
+    "libs/elf",
+    "user/echo",
 ]
 
 [workspace.package]
@@ -15,7 +15,7 @@ publish = false
 
 [workspace.dependencies]
 boot-info = { path = "libs/boot-info" }
-lazers-elf = { path = "libs/lazers-elf" }
+elf = { path = "libs/elf" }
 
 [profile.dev]
 panic = "abort"

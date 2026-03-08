@@ -1,3 +1,9 @@
+//! Minimal syscall dispatch for the bootstrap user-mode runtime.
+//!
+//! The ABI is intentionally tiny: stdio-backed `read`/`write`, cooperative
+//! `yield`, and `exit`. This is enough to validate the first user process
+//! without prematurely designing a wider kernel API surface.
+
 use crate::arch::TrapFrame;
 use crate::memory;
 
@@ -6,6 +12,10 @@ const SYS_WRITE: u64 = 1;
 const SYS_YIELD: u64 = 2;
 const SYS_EXIT: u64 = 3;
 
+/// Dispatches a syscall trap frame in place.
+///
+/// The user-mode calling convention places the syscall number in `rax` and the
+/// first three arguments in `rdi`, `rsi`, and `rdx`.
 pub fn dispatch(frame: &mut TrapFrame) {
     match frame.rax {
         SYS_READ => {

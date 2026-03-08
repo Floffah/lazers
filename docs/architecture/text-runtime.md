@@ -19,13 +19,13 @@ The current text runtime keeps the model intentionally small, but it now sits on
 - one fullscreen terminal surface
 - one terminal endpoint
 - one kernel system process that owns terminal-service work
-- one user echo process created from an embedded ELF image
+- one user echo process loaded from `/bin/echo` on the system partition
 - process-owned stdio bound through a process-owned handle table
 - one kernel terminal thread that handles keyboard polling and terminal flushing
 - one user thread that reads and writes through `stdin`/`stdout` syscalls
 - one cooperative scheduler with a separate idle thread
 
-This is still a bring-up step, not the final shell/session model. The important constraint is that text-program logic now runs as a real user process on top of stdio-backed handles, so a future userland shell can replace the echo program without redesigning the terminal boundary.
+This is still a bring-up step, not the final shell/session model. The important constraint is that text-program logic now runs as a real disk-backed user process on top of stdio-backed handles, so a future userland shell can replace the echo program without redesigning the terminal boundary or the executable-loading path.
 
 ## Future Implications
 

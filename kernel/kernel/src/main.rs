@@ -1,6 +1,14 @@
 #![no_main]
 #![no_std]
 
+//! Kernel entry and bootstrap orchestration.
+//!
+//! This module ties together the early boot handoff, kernel-owned runtime
+//! initialization, root filesystem mounting, and creation of the first kernel
+//! and user processes. It intentionally stays small: subsystems own their own
+//! policy, while `kernel_main` wires them together into the first runnable
+//! system state.
+
 #[macro_use]
 mod macros;
 mod arch;
@@ -9,8 +17,10 @@ mod font;
 mod io;
 mod keyboard;
 mod memory;
+mod pci;
 mod process;
 mod scheduler;
+mod storage;
 mod syscall;
 mod terminal;
 mod thread;
@@ -19,8 +29,6 @@ use core::arch::{asm, global_asm};
 use core::panic::PanicInfo;
 use boot_info::{BootInfo, PixelFormat};
 use memory::LoadedUserProgram;
-
-const EMBEDDED_USER_ECHO_ELF: &[u8] = include_bytes!(env!("LAZERS_USER_ECHO_ELF"));
 
 global_asm!(
     r#"
@@ -36,6 +44,12 @@ _start:
 );
 
 #[no_mangle]
+/// First Rust entrypoint after the assembly `_start` shim.
+///
+/// The loader hands over a validated [`BootInfo`] pointer in `rdi`. From there
+/// the kernel is responsible for taking ownership of paging, console output,
+/// storage discovery, and scheduler bring-up before transferring execution to
+/// the first real threads.
 pub extern "sysv64" fn kernel_main(boot_info: *const BootInfo) -> ! {
     let Some(boot_info) = (unsafe { boot_info.as_ref() }) else {
         halt_forever();
@@ -50,7 +64,7 @@ pub extern "sysv64" fn kernel_main(boot_info: *const BootInfo) -> ! {
     arch::init();
     console::init(boot_info.framebuffer);
     console::clear();
-    kprintln!("Running lazers-kernel in suite v0.5");
+    kprintln!("Running kernel in suite v0.5");
     kprintln!(
         "Using screen of {}x{} {}",
         boot_info.framebuffer.width,
@@ -62,7 +76,9 @@ pub extern "sysv64" fn kernel_main(boot_info: *const BootInfo) -> ! {
     let surface = terminal::TerminalSurface::new(endpoint);
     surface.begin_session();
 
-    let user_program = load_embedded_user_program();
+    let root_fs = storage::mount_root_fs()
+        .unwrap_or_else(|error| panic!("failed to mount root filesystem: {}", error.as_str()));
+    let user_program = load_user_program_from_disk(root_fs);
 
     scheduler::init();
     let kernel_process = scheduler::create_process(scheduler::ProcessConfig {
@@ -103,11 +119,24 @@ pub(crate) fn halt_forever() -> ! {
     }
 }
 
-fn load_embedded_user_program() -> LoadedUserProgram {
-    memory::load_user_program(EMBEDDED_USER_ECHO_ELF)
-        .unwrap_or_else(|error| panic!("failed to load embedded user program: {}", error.as_str()))
+/// Loads the default disk-backed user program from the runtime root filesystem.
+///
+/// The path is deliberately hard-coded at this stage so the kernel proves the
+/// full `root fs -> ELF loader -> user process` path without yet introducing
+/// session policy or shell selection.
+fn load_user_program_from_disk(root_fs: storage::RootFs) -> LoadedUserProgram {
+    let program_bytes = root_fs
+        .read_file("/bin/echo")
+        .unwrap_or_else(|error| panic!("failed to read /bin/echo: {}", error.as_str()));
+    memory::load_user_program(program_bytes)
+        .unwrap_or_else(|error| panic!("failed to load /bin/echo: {}", error.as_str()))
 }
 
+/// Runs the fullscreen terminal service loop for the primary terminal session.
+///
+/// This thread stays in kernel mode because it owns hardware polling and
+/// framebuffer flushing. Programs talk to it indirectly through the terminal
+/// endpoint and stdio handles rather than writing to the screen directly.
 fn terminal_thread_entry() -> ! {
     let endpoint = terminal::primary_endpoint();
     let surface = terminal::TerminalSurface::new(endpoint);
@@ -124,6 +153,10 @@ fn terminal_thread_entry() -> ! {
     }
 }
 
+/// Cooperative idle thread run when no other work is runnable.
+///
+/// It does not own any policy beyond providing a stable fallback thread for the
+/// scheduler while the kernel remains preemption-free.
 fn idle_thread_entry() -> ! {
     loop {
         unsafe {

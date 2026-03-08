@@ -1,5 +1,5 @@
 [package]
-name = "lazers-kernel"
+name = "kernel"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
@@ -7,10 +7,10 @@ publish.workspace = true
 
 [dependencies]
 boot-info.workspace = true
-lazers-elf.workspace = true
+elf.workspace = true
 
 [build-dependencies]
 
 [[bin]]
-name = "lazers-kernel"
+name = "kernel"
 path = "src/main.rs"

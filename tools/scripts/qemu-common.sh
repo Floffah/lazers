@@ -82,9 +82,9 @@ qemu_base_args() {
     -m 256M \
     -drive "if=pflash,format=raw,readonly=on,file=$ovmf_code" \
     -drive "if=pflash,format=raw,file=$vars_path" \
-    -device qemu-xhci,id=xhci \
-    -drive "if=none,id=usbstick,format=raw,file=$IMAGE_PATH" \
-    -device usb-storage,bus=xhci.0,drive=usbstick,removable=true \
+    -device ich9-ahci,id=ahci \
+    -drive "if=none,id=systemdisk,format=raw,file=$IMAGE_PATH" \
+    -device ide-hd,bus=ahci.0,drive=systemdisk \
     -no-reboot \
     -no-shutdown
   )
