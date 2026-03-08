@@ -14,7 +14,7 @@ QEMU is used only as the execution environment for that same path. The disk layo
 4. The loader captures framebuffer details, copies a normalized memory map, finds the ACPI RSDP if present, and allocates the initial kernel stack.
 5. The loader exits boot services.
 6. The loader jumps to the kernel entry with `rdi = BootInfo` and the stack switched to the allocated kernel stack.
-7. The kernel validates `BootInfo`, renders the initial banner, initializes the first terminal surface and endpoint, creates the first bootstrap process and threads, and enters a cooperative scheduler.
+7. The kernel validates `BootInfo`, replaces the firmware page tables with kernel-owned page tables, initializes GDT/TSS/IDT state, renders the initial banner, creates the first terminal surface and endpoint, starts a kernel system process plus one embedded user ELF process, and enters a cooperative scheduler.
 
 ## Contracts
 
@@ -29,6 +29,6 @@ QEMU is used only as the execution environment for that same path. The disk layo
 
 - BIOS boot
 - higher-half memory mapping
-- kernel-owned page tables
-- interrupts, SMP, or a userland shell
+- timer-driven preemption, SMP, or a userland shell
+- disk-backed user-program loading or `/bin/lash`
 - QEMU-specific device handoff or firmware shortcuts

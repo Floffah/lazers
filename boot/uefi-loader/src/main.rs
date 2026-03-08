@@ -3,14 +3,12 @@
 
 extern crate alloc;
 
-mod elf;
-
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use boot_info::{BootInfo, FramebufferInfo, MemoryRegion, MemoryRegionKind, PixelFormat};
 use core::arch::asm;
 use core::ptr::{copy_nonoverlapping, write_bytes};
-use elf::{ElfError, ElfImage, PT_LOAD};
+use lazers_elf::{ElfError, ElfImage, PT_LOAD};
 use uefi::boot::{self, AllocateType, MemoryType};
 use uefi::fs::FileSystem;
 use uefi::mem::memory_map::MemoryMap;

@@ -1,13 +1,17 @@
 use core::arch::global_asm;
 use core::cell::UnsafeCell;
 
+use crate::arch;
 use crate::io::{KernelObject, StdioHandles};
+use crate::memory::AddressSpace;
 use crate::process::{Process, ProcessId};
 use crate::terminal::TerminalEndpoint;
-use crate::thread::{Thread, ThreadContext, ThreadEntry, ThreadId, ThreadState};
+use crate::thread::{
+    KernelThreadEntry, Thread, ThreadContext, ThreadId, ThreadStart, ThreadState, UserThreadStart,
+};
 
 const MAX_PROCESSES: usize = 4;
-const MAX_THREADS: usize = 4;
+const MAX_THREADS: usize = 6;
 const THREAD_STACK_SIZE: usize = 16 * 1024;
 
 static SCHEDULER: SchedulerCell = SchedulerCell::new();
@@ -41,25 +45,46 @@ unsafe extern "C" {
 }
 
 #[derive(Clone, Copy)]
-pub struct BootstrapProcessConfig {
+pub struct ProcessConfig {
     pub name: &'static str,
-    pub terminal_endpoint: &'static TerminalEndpoint,
+    pub address_space: AddressSpace,
+    pub terminal_endpoint: Option<&'static TerminalEndpoint>,
 }
 
 pub fn init() {
     with_scheduler_mut(|scheduler| scheduler.reset());
 }
 
-pub fn create_bootstrap_process(config: BootstrapProcessConfig) -> ProcessId {
-    with_scheduler_mut(|scheduler| scheduler.create_bootstrap_process(config))
+pub fn create_process(config: ProcessConfig) -> ProcessId {
+    with_scheduler_mut(|scheduler| scheduler.create_process(config))
 }
 
 pub fn create_kernel_thread(
     name: &'static str,
-    process_id: Option<ProcessId>,
-    entry: ThreadEntry,
+    process_id: ProcessId,
+    entry: KernelThreadEntry,
 ) -> ThreadId {
-    with_scheduler_mut(|scheduler| scheduler.create_thread(name, process_id, entry))
+    with_scheduler_mut(|scheduler| {
+        scheduler.create_thread(name, process_id, ThreadStart::Kernel(entry))
+    })
+}
+
+pub fn create_user_thread(
+    name: &'static str,
+    process_id: ProcessId,
+    entry_point: u64,
+    user_stack_top: u64,
+) -> ThreadId {
+    with_scheduler_mut(|scheduler| {
+        scheduler.create_thread(
+            name,
+            process_id,
+            ThreadStart::User(UserThreadStart {
+                entry_point,
+                user_stack_top,
+            }),
+        )
+    })
 }
 
 pub fn mark_idle_thread(thread_id: ThreadId) {
@@ -70,19 +95,23 @@ pub fn mark_idle_thread(thread_id: ThreadId) {
 
 pub fn start() -> ! {
     let next = with_scheduler_mut(|scheduler| {
-        let Some(next_thread) = scheduler.next_runnable_thread(None) else {
+        let Some(thread_id) = scheduler.next_runnable_thread(None) else {
             crate::halt_forever();
         };
 
-        scheduler.current_thread = Some(next_thread);
-        scheduler.thread_mut(next_thread).set_state(ThreadState::Running);
-        next_thread
+        scheduler.current_thread = Some(thread_id);
+        scheduler.thread_mut(thread_id).set_state(ThreadState::Running);
+        scheduler.activation(thread_id)
     });
 
+    arch::activate_address_space(next.address_space, next.kernel_stack_top);
     unsafe {
         with_scheduler_mut(|scheduler| {
-            let next_context = scheduler.thread_context(next) as *const ThreadContext;
-            context_switch(&mut scheduler.bootstrap_context as *mut ThreadContext, next_context);
+            let next_context = scheduler.thread_context(next.thread_id) as *const ThreadContext;
+            context_switch(
+                &mut scheduler.bootstrap_context as *mut ThreadContext,
+                next_context,
+            );
         });
     }
 
@@ -90,58 +119,49 @@ pub fn start() -> ! {
 }
 
 pub fn yield_now() {
-    let switch = with_scheduler_mut(|scheduler| {
-        let Some(current) = scheduler.current_thread else {
-            return None;
-        };
-
-        let Some(next) = scheduler.next_runnable_thread(Some(current)) else {
-            return None;
-        };
-
-        if next == current {
-            return None;
-        }
-
-        scheduler.thread_mut(current).set_state(ThreadState::Runnable);
-        scheduler.thread_mut(next).set_state(ThreadState::Running);
-        scheduler.current_thread = Some(next);
-
-        let current_context = scheduler.thread_context(current) as *mut ThreadContext;
-        let next_context = scheduler.thread_context(next) as *const ThreadContext;
-
-        Some((current, next, current_context, next_context))
-    });
-
-    let Some((_current, _next, current_context, next_context)) = switch else {
+    let switch = with_scheduler_mut(|scheduler| scheduler.prepare_switch(false));
+    let Some(switch) = switch else {
         return;
     };
 
+    arch::activate_address_space(switch.next_space, switch.next_stack_top);
     unsafe {
-        context_switch(current_context, next_context);
+        context_switch(switch.current_context, switch.next_context);
     }
 }
 
-pub fn current_process_read_stdin_byte() -> Option<u8> {
-    with_current_process(|process| process.read_stdin_byte()).flatten()
+pub fn block_current_thread_and_schedule() -> ! {
+    let switch = with_scheduler_mut(|scheduler| scheduler.prepare_switch(true));
+    let Some(switch) = switch else {
+        crate::halt_forever();
+    };
+
+    arch::activate_address_space(switch.next_space, switch.next_stack_top);
+    unsafe {
+        context_switch(switch.current_context, switch.next_context);
+    }
+
+    crate::halt_forever()
 }
 
-pub fn current_process_write_stdout_byte(byte: u8) -> bool {
-    with_current_process(|process| process.write_stdout_byte(byte)).unwrap_or(false)
+pub fn current_process_read(fd: usize, buffer: &mut [u8]) -> usize {
+    with_current_process(|process| process.read(fd, buffer)).unwrap_or(0)
 }
 
-#[allow(dead_code)]
-pub fn current_process_write_stderr_byte(byte: u8) -> bool {
-    with_current_process(|process| process.write_stderr_byte(byte)).unwrap_or(false)
+pub fn current_process_write(fd: usize, buffer: &[u8]) -> usize {
+    with_current_process(|process| process.write(fd, buffer)).unwrap_or(0)
 }
 
-pub fn run_current_thread_entry() -> ! {
-    let entry = with_scheduler(|scheduler| {
+pub fn run_current_thread_start() -> ! {
+    let start = with_scheduler(|scheduler| {
         let current = scheduler.current_thread.expect("no current thread");
-        scheduler.thread(current).entry()
+        scheduler.thread(current).start()
     });
 
-    entry()
+    match start {
+        ThreadStart::Kernel(entry) => entry(),
+        ThreadStart::User(user) => arch::enter_user_mode(user.entry_point, user.user_stack_top),
+    }
 }
 
 fn with_current_process<F, T>(operation: F) -> Option<T>
@@ -150,7 +170,7 @@ where
 {
     with_scheduler(|scheduler| {
         let current = scheduler.current_thread?;
-        let process_id = scheduler.thread(current).process_id()?;
+        let process_id = scheduler.thread(current).process_id();
         Some(operation(scheduler.process(process_id)))
     })
 }
@@ -170,7 +190,7 @@ where
 }
 
 pub extern "C" fn thread_entry_trampoline() -> ! {
-    run_current_thread_entry()
+    run_current_thread_start()
 }
 
 struct SchedulerCell {
@@ -216,25 +236,27 @@ impl SchedulerState {
         *self = Self::new();
     }
 
-    fn create_bootstrap_process(&mut self, config: BootstrapProcessConfig) -> ProcessId {
+    fn create_process(&mut self, config: ProcessConfig) -> ProcessId {
         let slot = self
             .processes
             .iter()
             .position(|process| process.is_none())
             .expect("process capacity exhausted");
         let process_id = ProcessId(slot);
-        let mut process = Process::new(process_id, config.name);
+        let mut process = Process::new(process_id, config.name, config.address_space);
 
-        let stdin = process
-            .install_handle(KernelObject::TerminalEndpoint(config.terminal_endpoint))
-            .expect("stdin handle capacity exhausted");
-        let stdout = process
-            .install_handle(KernelObject::TerminalEndpoint(config.terminal_endpoint))
-            .expect("stdout handle capacity exhausted");
-        let stderr = process
-            .install_handle(KernelObject::TerminalEndpoint(config.terminal_endpoint))
-            .expect("stderr handle capacity exhausted");
-        process.set_stdio(StdioHandles::new(stdin, stdout, stderr));
+        if let Some(endpoint) = config.terminal_endpoint {
+            let stdin = process
+                .install_handle(KernelObject::TerminalEndpoint(endpoint))
+                .expect("stdin handle capacity exhausted");
+            let stdout = process
+                .install_handle(KernelObject::TerminalEndpoint(endpoint))
+                .expect("stdout handle capacity exhausted");
+            let stderr = process
+                .install_handle(KernelObject::TerminalEndpoint(endpoint))
+                .expect("stderr handle capacity exhausted");
+            process.set_stdio(StdioHandles::new(stdin, stdout, stderr));
+        }
 
         self.processes[slot] = Some(process);
         process_id
@@ -243,8 +265,8 @@ impl SchedulerState {
     fn create_thread(
         &mut self,
         name: &'static str,
-        process_id: Option<ProcessId>,
-        entry: ThreadEntry,
+        process_id: ProcessId,
+        start: ThreadStart,
     ) -> ThreadId {
         let slot = self
             .threads
@@ -252,9 +274,45 @@ impl SchedulerState {
             .position(|thread| thread.is_none())
             .expect("thread capacity exhausted");
         let thread_id = ThreadId(slot);
-        let context = self.initial_context_for(slot);
-        self.threads[slot] = Some(Thread::new(thread_id, name, process_id, entry, context));
+        let (context, kernel_stack_top) = self.initial_context_for(slot);
+        self.threads[slot] = Some(Thread::new(
+            thread_id,
+            name,
+            process_id,
+            start,
+            context,
+            kernel_stack_top,
+        ));
         thread_id
+    }
+
+    fn prepare_switch(&mut self, block_current: bool) -> Option<PreparedSwitch> {
+        let current = self.current_thread?;
+        let next = self.next_runnable_thread(Some(current))?;
+
+        if next == current && !block_current {
+            return None;
+        }
+
+        let current_state = if block_current {
+            ThreadState::Blocked
+        } else {
+            ThreadState::Runnable
+        };
+        self.thread_mut(current).set_state(current_state);
+        self.thread_mut(next).set_state(ThreadState::Running);
+        self.current_thread = Some(next);
+
+        let current_context = self.thread_context(current) as *mut ThreadContext;
+        let next_context = self.thread_context(next) as *const ThreadContext;
+        let activation = self.activation(next);
+
+        Some(PreparedSwitch {
+            current_context,
+            next_context,
+            next_space: activation.address_space,
+            next_stack_top: activation.kernel_stack_top,
+        })
     }
 
     fn next_runnable_thread(&self, current: Option<ThreadId>) -> Option<ThreadId> {
@@ -264,8 +322,10 @@ impl SchedulerState {
         }
 
         self.idle_thread.filter(|thread_id| {
-            self.thread(*thread_id).state() == ThreadState::Runnable
-                || self.thread(*thread_id).state() == ThreadState::Running
+            matches!(
+                self.thread(*thread_id).state(),
+                ThreadState::Runnable | ThreadState::Running
+            )
         })
     }
 
@@ -294,7 +354,7 @@ impl SchedulerState {
         None
     }
 
-    fn initial_context_for(&mut self, slot: usize) -> ThreadContext {
+    fn initial_context_for(&mut self, slot: usize) -> (ThreadContext, u64) {
         let stack = &mut self.stacks[slot];
         let stack_top = stack.bytes.as_mut_ptr_range().end as usize;
         let aligned_top = stack_top & !0xf;
@@ -303,9 +363,22 @@ impl SchedulerState {
             (initial_rsp as *mut usize).write(thread_entry_trampoline as *const () as usize);
         }
 
-        ThreadContext {
-            rsp: initial_rsp as u64,
-            ..ThreadContext::zeroed()
+        (
+            ThreadContext {
+                rsp: initial_rsp as u64,
+                ..ThreadContext::zeroed()
+            },
+            aligned_top as u64,
+        )
+    }
+
+    fn activation(&self, thread_id: ThreadId) -> ThreadActivation {
+        let thread = self.thread(thread_id);
+        let process = self.process(thread.process_id());
+        ThreadActivation {
+            thread_id,
+            kernel_stack_top: thread.kernel_stack_top(),
+            address_space: process.address_space(),
         }
     }
 
@@ -330,6 +403,20 @@ impl SchedulerState {
     fn thread_context(&mut self, thread_id: ThreadId) -> &mut ThreadContext {
         self.thread_mut(thread_id).context_mut()
     }
+}
+
+struct PreparedSwitch {
+    current_context: *mut ThreadContext,
+    next_context: *const ThreadContext,
+    next_space: AddressSpace,
+    next_stack_top: u64,
+}
+
+#[derive(Clone, Copy)]
+struct ThreadActivation {
+    thread_id: ThreadId,
+    kernel_stack_top: u64,
+    address_space: AddressSpace,
 }
 
 #[derive(Clone, Copy)]

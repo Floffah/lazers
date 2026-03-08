@@ -14,15 +14,18 @@ The long-term model is:
 
 ## Current Foundation
 
-The current kernel-hosted text runtime keeps the model intentionally small, but it now sits on top of the first real runtime structures:
+The current text runtime keeps the model intentionally small, but it now sits on top of the first real kernel and user execution boundary:
 
 - one fullscreen terminal surface
 - one terminal endpoint
-- one bootstrap process with stdio bound through a process-owned handle table
-- one terminal thread running the current text-program logic
+- one kernel system process that owns terminal-service work
+- one user echo process created from an embedded ELF image
+- process-owned stdio bound through a process-owned handle table
+- one kernel terminal thread that handles keyboard polling and terminal flushing
+- one user thread that reads and writes through `stdin`/`stdout` syscalls
 - one cooperative scheduler with a separate idle thread
 
-This is still a kernel bring-up step, not the final ownership model. The important constraint is that text-program logic now runs as process/thread work on top of stdio-backed handles, so a future userland shell can replace it without redesigning the terminal boundary.
+This is still a bring-up step, not the final shell/session model. The important constraint is that text-program logic now runs as a real user process on top of stdio-backed handles, so a future userland shell can replace the echo program without redesigning the terminal boundary.
 
 ## Future Implications
 

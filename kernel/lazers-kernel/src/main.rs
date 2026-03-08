@@ -3,18 +3,24 @@
 
 #[macro_use]
 mod macros;
+mod arch;
 mod console;
 mod font;
 mod io;
 mod keyboard;
+mod memory;
 mod process;
 mod scheduler;
+mod syscall;
 mod terminal;
 mod thread;
 
 use core::arch::{asm, global_asm};
 use core::panic::PanicInfo;
 use boot_info::{BootInfo, PixelFormat};
+use memory::LoadedUserProgram;
+
+const EMBEDDED_USER_ECHO_ELF: &[u8] = include_bytes!(env!("LAZERS_USER_ECHO_ELF"));
 
 global_asm!(
     r#"
@@ -39,6 +45,9 @@ pub extern "sysv64" fn kernel_main(boot_info: *const BootInfo) -> ! {
         halt_forever();
     }
 
+    memory::init(boot_info)
+        .unwrap_or_else(|error| panic!("memory init failed: {}", error.as_str()));
+    arch::init();
     console::init(boot_info.framebuffer);
     console::clear();
     kprintln!("Running lazers-kernel in suite v0.5");
@@ -52,14 +61,28 @@ pub extern "sysv64" fn kernel_main(boot_info: *const BootInfo) -> ! {
     let endpoint = terminal::primary_endpoint();
     let surface = terminal::TerminalSurface::new(endpoint);
     surface.begin_session();
+
+    let user_program = load_embedded_user_program();
+
     scheduler::init();
-    let terminal_process = scheduler::create_bootstrap_process(scheduler::BootstrapProcessConfig {
-        name: "bootstrap-terminal",
-        terminal_endpoint: endpoint,
+    let kernel_process = scheduler::create_process(scheduler::ProcessConfig {
+        name: "kernel-system",
+        address_space: memory::kernel_address_space(),
+        terminal_endpoint: None,
     });
-    let _terminal_thread =
-        scheduler::create_kernel_thread("terminal", Some(terminal_process), terminal_thread_entry);
-    let idle_thread = scheduler::create_kernel_thread("idle", None, idle_thread_entry);
+    let user_process = scheduler::create_process(scheduler::ProcessConfig {
+        name: "user-echo",
+        address_space: user_program.address_space,
+        terminal_endpoint: Some(endpoint),
+    });
+    let _terminal_thread = scheduler::create_kernel_thread("terminal", kernel_process, terminal_thread_entry);
+    let _user_thread = scheduler::create_user_thread(
+        "user-echo-main",
+        user_process,
+        user_program.entry_point,
+        user_program.user_stack_top,
+    );
+    let idle_thread = scheduler::create_kernel_thread("idle", kernel_process, idle_thread_entry);
     scheduler::mark_idle_thread(idle_thread);
     scheduler::start();
 }
@@ -80,6 +103,11 @@ pub(crate) fn halt_forever() -> ! {
     }
 }
 
+fn load_embedded_user_program() -> LoadedUserProgram {
+    memory::load_user_program(EMBEDDED_USER_ECHO_ELF)
+        .unwrap_or_else(|error| panic!("failed to load embedded user program: {}", error.as_str()))
+}
+
 fn terminal_thread_entry() -> ! {
     let endpoint = terminal::primary_endpoint();
     let surface = terminal::TerminalSurface::new(endpoint);
@@ -91,7 +119,6 @@ fn terminal_thread_entry() -> ! {
             surface.handle_key_event(event);
         }
 
-        echo_program_step();
         surface.flush_output();
         scheduler::yield_now();
     }
@@ -103,23 +130,6 @@ fn idle_thread_entry() -> ! {
             asm!("pause", options(nomem, nostack, preserves_flags));
         }
         scheduler::yield_now();
-    }
-}
-
-fn echo_program_step() {
-    while let Some(byte) = scheduler::current_process_read_stdin_byte() {
-        match byte {
-            b'\n' => {
-                let _ = scheduler::current_process_write_stdout_byte(b'\n');
-            }
-            0x7f => {
-                let _ = scheduler::current_process_write_stdout_byte(0x7f);
-            }
-            0x20..=0x7e => {
-                let _ = scheduler::current_process_write_stdout_byte(byte);
-            }
-            _ => {}
-        }
     }
 }
 

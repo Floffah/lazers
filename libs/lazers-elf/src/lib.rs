@@ -1,7 +1,12 @@
+#![no_std]
+
 use core::mem::size_of;
 use core::ops::Range;
 
 pub const PT_LOAD: u32 = 1;
+pub const PF_X: u32 = 1 << 0;
+pub const PF_W: u32 = 1 << 1;
+pub const PF_R: u32 = 1 << 2;
 
 const ELF_MAGIC: [u8; 4] = [0x7f, b'E', b'L', b'F'];
 const ELF_CLASS_64: u8 = 2;
@@ -64,6 +69,7 @@ impl<'a> Iterator for ProgramHeaderIter<'a> {
 #[derive(Clone, Copy, Debug)]
 pub struct ProgramHeader {
     pub kind: u32,
+    pub flags: u32,
     pub offset: u64,
     pub virtual_address: u64,
     pub physical_address: u64,
@@ -79,6 +85,7 @@ impl ProgramHeader {
 
         Ok(Self {
             kind: read_u32(bytes, 0),
+            flags: read_u32(bytes, 4),
             offset: read_u64(bytes, 8),
             virtual_address: read_u64(bytes, 16),
             physical_address: read_u64(bytes, 24),

@@ -7,5 +7,5 @@ publish.workspace = true
 
 [dependencies]
 boot-info.workspace = true
+lazers-elf.workspace = true
 uefi = { version = "0.35.0", features = ["alloc", "global_allocator", "logger", "panic_handler"] }
-

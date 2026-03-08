@@ -31,38 +31,52 @@ pub struct ThreadId(pub usize);
 pub enum ThreadState {
     Runnable,
     Running,
-    #[allow(dead_code)]
     Blocked,
 }
 
-pub type ThreadEntry = fn() -> !;
+pub type KernelThreadEntry = fn() -> !;
+
+#[derive(Clone, Copy)]
+pub enum ThreadStart {
+    Kernel(KernelThreadEntry),
+    User(UserThreadStart),
+}
+
+#[derive(Clone, Copy)]
+pub struct UserThreadStart {
+    pub entry_point: u64,
+    pub user_stack_top: u64,
+}
 
 #[derive(Clone, Copy)]
 pub struct Thread {
     id: ThreadId,
     #[allow(dead_code)]
     name: &'static str,
-    process_id: Option<crate::process::ProcessId>,
-    entry: ThreadEntry,
+    process_id: crate::process::ProcessId,
+    start: ThreadStart,
     state: ThreadState,
     context: ThreadContext,
+    kernel_stack_top: u64,
 }
 
 impl Thread {
     pub const fn new(
         id: ThreadId,
         name: &'static str,
-        process_id: Option<crate::process::ProcessId>,
-        entry: ThreadEntry,
+        process_id: crate::process::ProcessId,
+        start: ThreadStart,
         context: ThreadContext,
+        kernel_stack_top: u64,
     ) -> Self {
         Self {
             id,
             name,
             process_id,
-            entry,
+            start,
             state: ThreadState::Runnable,
             context,
+            kernel_stack_top,
         }
     }
 
@@ -70,12 +84,12 @@ impl Thread {
         self.id
     }
 
-    pub const fn process_id(&self) -> Option<crate::process::ProcessId> {
+    pub const fn process_id(&self) -> crate::process::ProcessId {
         self.process_id
     }
 
-    pub const fn entry(&self) -> ThreadEntry {
-        self.entry
+    pub const fn start(&self) -> ThreadStart {
+        self.start
     }
 
     pub const fn state(&self) -> ThreadState {
@@ -88,5 +102,9 @@ impl Thread {
 
     pub fn context_mut(&mut self) -> &mut ThreadContext {
         &mut self.context
+    }
+
+    pub const fn kernel_stack_top(&self) -> u64 {
+        self.kernel_stack_top
     }
 }

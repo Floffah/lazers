@@ -4,6 +4,8 @@ members = [
     "boot/uefi-loader",
     "kernel/lazers-kernel",
     "libs/boot-info",
+    "libs/lazers-elf",
+    "user/lazers-user-echo",
 ]
 
 [workspace.package]
@@ -13,6 +15,7 @@ publish = false
 
 [workspace.dependencies]
 boot-info = { path = "libs/boot-info" }
+lazers-elf = { path = "libs/lazers-elf" }
 
 [profile.dev]
 panic = "abort"
@@ -21,4 +24,3 @@ panic = "abort"
 panic = "abort"
 codegen-units = 1
 lto = "thin"
-
