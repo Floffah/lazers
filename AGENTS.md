@@ -15,7 +15,7 @@ You are a world renowned software architect and engineer with deep expertise in 
 - Use `just` as the primary task runner for local workflows.
 - Treat this repository as a monorepo.
 - Treat the kernel architecture as a modular monolith unless an explicit architectural decision changes that direction.
-- Keep documentation close to major structural decisions. Use `docs/adr/` for architecture decisions and the nearest relevant `README.md` for local context.
+- Keep documentation close to major structural decisions. Prefer current-state architecture documents under `docs/architecture/` and the nearest relevant `README.md` for local context.
 - Favor small, explicit module boundaries and coherent naming from the beginning rather than relying on later cleanup passes.
 - Preserve the core product direction in implementation decisions: lean enough for modest hardware, modular enough to remove unneeded subsystems cleanly, and usable with sensible defaults rather than constant manual configuration.
 - Do not import Unix, DOS, or Windows conventions by reflex. Reuse an inherited pattern only when it is a deliberate fit for this system.

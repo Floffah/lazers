@@ -29,3 +29,14 @@ user_syscall3:
     mov rdx, rcx
     int 0x80
     ret
+
+.section .text.user_syscall4,"ax"
+.global user_syscall4
+user_syscall4:
+    mov rax, rdi
+    mov rdi, rsi
+    mov rsi, rdx
+    mov rdx, rcx
+    mov rcx, r8
+    int 0x80
+    ret

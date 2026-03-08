@@ -6,6 +6,7 @@ kernel_rustflags := "-C relocation-model=static -C link-arg=-Tkernel/kernel/link
 user_rustflags := "-C relocation-model=static -C link-arg=-Tlibs/liblazer/linker.ld -C link-arg=-no-pie -C link-arg=--build-id=none -C link-arg=-z -C link-arg=max-page-size=0x1000"
 echo_elf_path := "build/echo"
 lash_elf_path := "build/lash"
+ls_elf_path := "build/ls"
 
 default:
     @just --list
@@ -22,6 +23,8 @@ build-user:
     cp target/{{kernel_target}}/release/echo {{echo_elf_path}}
     RUSTFLAGS='{{user_rustflags}}' cargo build --release --package lash --target {{kernel_target}}
     cp target/{{kernel_target}}/release/lash {{lash_elf_path}}
+    RUSTFLAGS='{{user_rustflags}}' cargo build --release --package ls --target {{kernel_target}}
+    cp target/{{kernel_target}}/release/ls {{ls_elf_path}}
 
 build-kernel:
     RUSTFLAGS='{{kernel_rustflags}}' cargo build --release --package kernel --target {{kernel_target}}
@@ -44,6 +47,7 @@ check:
     cargo check --package uefi-loader --target {{loader_target}}
     cargo check --package echo --target {{kernel_target}}
     cargo check --package lash --target {{kernel_target}}
+    cargo check --package ls --target {{kernel_target}}
     cargo check --package kernel --target {{kernel_target}}
 
 clean:

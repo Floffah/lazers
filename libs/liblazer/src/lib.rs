@@ -17,10 +17,15 @@ const SYS_WRITE: usize = 1;
 const SYS_YIELD: usize = 2;
 const SYS_EXIT: usize = 3;
 const SYS_SPAWN_WAIT: usize = 4;
+const SYS_READ_DIR: usize = 5;
 const SPAWN_ERROR_INVALID_PATH: usize = usize::MAX;
 const SPAWN_ERROR_FILE_NOT_FOUND: usize = usize::MAX - 1;
 const SPAWN_ERROR_INVALID_EXECUTABLE: usize = usize::MAX - 2;
 const SPAWN_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 3;
+const READ_DIR_ERROR_INVALID_PATH: usize = usize::MAX;
+const READ_DIR_ERROR_NOT_FOUND: usize = usize::MAX - 1;
+const READ_DIR_ERROR_BUFFER_TOO_SMALL: usize = usize::MAX - 2;
+const READ_DIR_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 3;
 
 global_asm!(include_str!("lib.asm"));
 
@@ -28,6 +33,7 @@ unsafe extern "C" {
     fn user_syscall0(number: usize) -> usize;
     fn user_syscall1(number: usize, arg0: usize) -> usize;
     fn user_syscall3(number: usize, arg0: usize, arg1: usize, arg2: usize) -> usize;
+    fn user_syscall4(number: usize, arg0: usize, arg1: usize, arg2: usize, arg3: usize) -> usize;
 }
 
 unsafe extern "Rust" {
@@ -54,6 +60,14 @@ pub enum SpawnError {
     InvalidPath,
     FileNotFound,
     InvalidExecutable,
+    ResourceUnavailable,
+}
+
+/// First-step userspace directory-listing failures.
+pub enum ReadDirError {
+    InvalidPath,
+    NotFound,
+    BufferTooSmall,
     ResourceUnavailable,
 }
 
@@ -108,6 +122,26 @@ pub fn spawn_wait(path: &str) -> Result<usize, SpawnError> {
         SPAWN_ERROR_FILE_NOT_FOUND => Err(SpawnError::FileNotFound),
         SPAWN_ERROR_INVALID_EXECUTABLE => Err(SpawnError::InvalidExecutable),
         SPAWN_ERROR_RESOURCE_UNAVAILABLE => Err(SpawnError::ResourceUnavailable),
+        _ => Ok(status),
+    }
+}
+
+/// Lists one absolute-path directory into the provided newline-delimited buffer.
+pub fn read_dir(path: &str, buffer: &mut [u8]) -> Result<usize, ReadDirError> {
+    let status = unsafe {
+        user_syscall4(
+            SYS_READ_DIR,
+            path.as_ptr() as usize,
+            path.len(),
+            buffer.as_mut_ptr() as usize,
+            buffer.len(),
+        )
+    };
+    match status {
+        READ_DIR_ERROR_INVALID_PATH => Err(ReadDirError::InvalidPath),
+        READ_DIR_ERROR_NOT_FOUND => Err(ReadDirError::NotFound),
+        READ_DIR_ERROR_BUFFER_TOO_SMALL => Err(ReadDirError::BufferTooSmall),
+        READ_DIR_ERROR_RESOURCE_UNAVAILABLE => Err(ReadDirError::ResourceUnavailable),
         _ => Ok(status),
     }
 }

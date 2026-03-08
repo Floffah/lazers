@@ -60,6 +60,11 @@ impl RootFs {
         debug_assert_eq!(bytes_read, buffer.len());
         Ok(buffer)
     }
+
+    /// Lists one absolute-path directory into a caller-provided newline-delimited buffer.
+    pub fn read_dir(&self, path: &str, buffer: &mut [u8]) -> Result<usize, StorageError> {
+        self.fs.read_dir(path, buffer)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -80,6 +85,7 @@ pub enum StorageError {
     InvalidShortName,
     FileNotFound,
     NotAFile,
+    NotADirectory,
     BufferTooSmall,
     RootFsUnavailable,
 }
@@ -102,6 +108,7 @@ impl StorageError {
             Self::InvalidShortName => "the requested path component is not a supported FAT short name",
             Self::FileNotFound => "the requested file was not found",
             Self::NotAFile => "the requested path does not name a regular file",
+            Self::NotADirectory => "the requested path does not name a directory",
             Self::BufferTooSmall => "the destination buffer is too small",
             Self::RootFsUnavailable => "the runtime root filesystem is not mounted",
         }
@@ -121,6 +128,11 @@ pub fn init_root_fs() -> Result<(), StorageError> {
 /// Reads one absolute-path file from the mounted runtime root filesystem.
 pub fn read_root_file(path: &str) -> Result<memory::KernelBuffer, StorageError> {
     with_root_fs(|root_fs| root_fs.read_file(path))
+}
+
+/// Lists one absolute-path directory from the mounted runtime root filesystem.
+pub fn read_root_dir(path: &str, buffer: &mut [u8]) -> Result<usize, StorageError> {
+    with_root_fs(|root_fs| root_fs.read_dir(path, buffer))
 }
 
 fn mount_root_fs() -> Result<RootFs, StorageError> {
@@ -597,33 +609,10 @@ impl Fat32 {
     }
 
     fn open_absolute(&self, path: &str) -> Result<FatDirectoryEntry, StorageError> {
-        if !path.starts_with('/') {
-            return Err(StorageError::PathNotAbsolute);
+        match self.resolve_absolute(path)? {
+            FatResolvedPath::File(entry) => Ok(entry),
+            FatResolvedPath::RootDirectory | FatResolvedPath::Directory(_) => Err(StorageError::NotAFile),
         }
-
-        let mut current_cluster = self.root_cluster;
-        let mut components = path.split('/').filter(|component| !component.is_empty()).peekable();
-        let Some(_) = components.peek() else {
-            return Err(StorageError::NotAFile);
-        };
-
-        while let Some(component) = components.next() {
-            let entry = self.find_in_directory(current_cluster, component)?;
-            if components.peek().is_none() {
-                if entry.is_directory {
-                    return Err(StorageError::NotAFile);
-                }
-                return Ok(entry);
-            }
-
-            if !entry.is_directory {
-                return Err(StorageError::FileNotFound);
-            }
-
-            current_cluster = entry.first_cluster;
-        }
-
-        Err(StorageError::FileNotFound)
     }
 
     fn read_file(&self, entry: &FatDirectoryEntry, buffer: &mut [u8]) -> Result<usize, StorageError> {
@@ -709,6 +698,95 @@ impl Fat32 {
         }
     }
 
+    fn resolve_absolute(&self, path: &str) -> Result<FatResolvedPath, StorageError> {
+        if !path.starts_with('/') {
+            return Err(StorageError::PathNotAbsolute);
+        }
+
+        let mut current_cluster = self.root_cluster;
+        let mut components = path.split('/').filter(|component| !component.is_empty()).peekable();
+        let Some(_) = components.peek() else {
+            return Ok(FatResolvedPath::RootDirectory);
+        };
+
+        while let Some(component) = components.next() {
+            let entry = self.find_in_directory(current_cluster, component)?;
+            if components.peek().is_none() {
+                if entry.is_directory {
+                    return Ok(FatResolvedPath::Directory(entry.first_cluster));
+                }
+                return Ok(FatResolvedPath::File(entry));
+            }
+
+            if !entry.is_directory {
+                return Err(StorageError::FileNotFound);
+            }
+
+            current_cluster = entry.first_cluster;
+        }
+
+        Err(StorageError::FileNotFound)
+    }
+
+    fn read_dir(&self, path: &str, buffer: &mut [u8]) -> Result<usize, StorageError> {
+        let start_cluster = match self.resolve_absolute(path)? {
+            FatResolvedPath::RootDirectory => self.root_cluster,
+            FatResolvedPath::Directory(cluster) => cluster,
+            FatResolvedPath::File(_) => return Err(StorageError::NotADirectory),
+        };
+
+        let mut written = 0usize;
+        let mut cluster = start_cluster;
+        let mut sector = [0u8; SECTOR_SIZE];
+
+        loop {
+            let cluster_lba = self.cluster_to_lba(cluster)?;
+            let mut sector_index = 0u8;
+            while sector_index < self.sectors_per_cluster {
+                self.device
+                    .read_sector(cluster_lba + sector_index as u64, &mut sector)?;
+
+                let mut entry_offset = 0usize;
+                while entry_offset + FAT_DIRECTORY_ENTRY_SIZE <= SECTOR_SIZE {
+                    let entry = &sector[entry_offset..entry_offset + FAT_DIRECTORY_ENTRY_SIZE];
+                    let first_byte = entry[0];
+                    if first_byte == 0x00 {
+                        return Ok(written);
+                    }
+                    if first_byte == 0xe5 {
+                        entry_offset += FAT_DIRECTORY_ENTRY_SIZE;
+                        continue;
+                    }
+
+                    let attributes = entry[11];
+                    if attributes == FAT_ATTRIBUTE_LONG_NAME || (attributes & FAT_ATTRIBUTE_VOLUME_ID) != 0 {
+                        entry_offset += FAT_DIRECTORY_ENTRY_SIZE;
+                        continue;
+                    }
+
+                    let display_name = display_short_name(&entry[0..11]);
+                    if !is_dot_entry(&display_name) {
+                        let required = display_name.len + 1;
+                        if written + required > buffer.len() {
+                            return Err(StorageError::BufferTooSmall);
+                        }
+                        buffer[written..written + display_name.len]
+                            .copy_from_slice(&display_name.bytes[..display_name.len]);
+                        written += display_name.len;
+                        buffer[written] = b'\n';
+                        written += 1;
+                    }
+
+                    entry_offset += FAT_DIRECTORY_ENTRY_SIZE;
+                }
+
+                sector_index += 1;
+            }
+
+            cluster = self.next_cluster(cluster)?;
+        }
+    }
+
     fn cluster_to_lba(&self, cluster: u32) -> Result<u64, StorageError> {
         if cluster < 2 {
             return Err(StorageError::InvalidFat32BootSector);
@@ -748,6 +826,17 @@ struct FatDirectoryEntry {
     first_cluster: u32,
     size: u32,
     is_directory: bool,
+}
+
+enum FatResolvedPath {
+    RootDirectory,
+    Directory(u32),
+    File(FatDirectoryEntry),
+}
+
+struct DisplayShortName {
+    bytes: [u8; 12],
+    len: usize,
 }
 
 #[repr(C)]
@@ -877,6 +966,48 @@ fn make_short_name(component: &str) -> Result<[u8; 11], StorageError> {
     }
 
     Ok(short_name)
+}
+
+fn display_short_name(entry: &[u8]) -> DisplayShortName {
+    let mut bytes = [0u8; 12];
+    let mut len = 0usize;
+
+    let mut name_len = 8usize;
+    while name_len > 0 && entry[name_len - 1] == b' ' {
+        name_len -= 1;
+    }
+
+    let mut extension_len = 3usize;
+    while extension_len > 0 && entry[8 + extension_len - 1] == b' ' {
+        extension_len -= 1;
+    }
+
+    let mut index = 0usize;
+    while index < name_len {
+        bytes[len] = entry[index];
+        len += 1;
+        index += 1;
+    }
+
+    if extension_len != 0 {
+        bytes[len] = b'.';
+        len += 1;
+        index = 0;
+        while index < extension_len {
+            bytes[len] = entry[8 + index];
+            len += 1;
+            index += 1;
+        }
+    }
+
+    DisplayShortName { bytes, len }
+}
+
+fn is_dot_entry(name: &DisplayShortName) -> bool {
+    matches!(
+        &name.bytes[..name.len],
+        [b'.'] | [b'.', b'.']
+    )
 }
 
 fn normalize_fat_byte(byte: u8) -> Result<u8, StorageError> {

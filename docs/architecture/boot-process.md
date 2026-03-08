@@ -26,6 +26,16 @@ QEMU is used only as the execution environment for that same path. The disk layo
 - Runtime root filesystem: the `LAZERS-SYSTEM` GPT partition mounted as `/`
 - Boot services are no longer available after handoff
 
+## Disk and Program Loading
+
+- The boot disk uses GPT with two FAT32 partitions:
+  - `LAZERS-ESP` for firmware-visible boot artifacts
+  - `LAZERS-SYSTEM` for the runtime root filesystem
+- The loader only needs the ESP. It loads `kernel.elf` from `/lazers/kernel.elf` and does not participate in normal userspace program loading.
+- After the kernel mounts `LAZERS-SYSTEM` as `/`, all normal runtime paths resolve against that partition only.
+- Disk-backed user programs are loaded through a kernel-owned `AHCI/SATA -> GPT -> FAT32 -> ELF` chain.
+- The current boot program is `/bin/lash`, and `lash` launches other user binaries like `/bin/echo` and `/bin/ls` through the same runtime executable-loading path.
+
 ## Non-Goals For V1
 
 - BIOS boot

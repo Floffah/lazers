@@ -8,6 +8,7 @@ members = [
     "libs/liblazer",
     "user/echo",
     "user/lash",
+    "user/ls",
 ]
 
 [workspace.package]

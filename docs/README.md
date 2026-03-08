@@ -1,5 +1,5 @@
 # docs
 
-Repository-wide architecture notes, design references, product principles, and decisions live here.
+Repository-wide architecture notes, design references, and product principles live here.
 
-Use this directory to keep foundational reasoning explicit so the system can stay simple, modular, and coherent as it grows.
+Use this directory to describe how the system works now, not to maintain a second historical record alongside git.

@@ -21,7 +21,7 @@
 - `user/`: system services, session components, applications, and GUI-facing runtime pieces
 - `libs/`: shared crates and libraries that support modular reuse without blurring subsystem boundaries
 - `tools/`: local tooling for builds, images, emulation, debugging, and developer workflows
-- `docs/`: architecture notes, ADRs, design principles, and repository documentation
+- `docs/`: current-state architecture notes, design principles, and repository documentation
 
 ## Build entry point
 
@@ -52,8 +52,8 @@ The repository now implements the first bootable path as:
 - a freestanding `ELF64` kernel image
 - a shared boot information contract between the loader and kernel
 - a raw GPT disk image with:
-  - a `FAT32` EFI System Partition that holds `BOOTX64.EFI` and `kernel.elf`
-  - a `FAT32` system partition that is mounted as `/` and stages `/bin/lash`, `/bin/echo`, and future userland binaries
+- a `FAT32` EFI System Partition that holds `BOOTX64.EFI` and `kernel.elf`
+  - a `FAT32` system partition that is mounted as `/` and stages `/bin/lash`, `/bin/echo`, `/bin/ls`, and future userland binaries
 
 The current success condition is still intentionally narrow: the loader exits boot services, the kernel takes control, replaces the firmware page tables, mounts the system partition, and launches `lash` as the first disk-backed user-mode shell. Early user binaries build on a shared `liblazer` runtime crate rather than carrying their own bootstrap and syscall glue, and the runtime now includes the first synchronous user-initiated child-process spawn path that `lash` uses to launch other programs.
 

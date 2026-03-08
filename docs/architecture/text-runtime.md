@@ -24,9 +24,23 @@ The current text runtime keeps the model intentionally small, but it now sits on
 - one kernel terminal thread that handles keyboard polling and terminal flushing
 - one user thread that reads and writes through `stdin`/`stdout` syscalls
 - one synchronous child-process spawn-and-wait path for future shell-launched programs
+- one narrow read-only directory-listing syscall used by `/bin/ls`
 - one cooperative scheduler with a separate idle thread
 
 This is still a bring-up step, not the final shell/session model. The important constraint is that text-program logic now runs as a real disk-backed user process on top of stdio-backed handles, and early user programs share one `liblazer` runtime crate for startup, panic-to-exit behavior, syscall wrappers, and minimal stdio helpers. A future userland shell should build on that same runtime surface rather than redefining its own bootstrap glue.
+
+The first shell-facing filesystem command path is also now present: `lash` can launch `/bin/ls`, and `ls` uses a narrow read-only directory-listing syscall rather than any shell built-in behavior.
+
+## Current Userspace Model
+
+- `liblazer` is the shared userland bootstrap crate for early programs.
+- User binaries still use `no_std` and `no_main`, with `liblazer` owning `_start`, syscall shims, panic-to-exit behavior, and basic stdio helpers.
+- `lash` is the first shell, but it is intentionally minimal:
+  - prompt and line editing live in userland
+  - command execution is synchronous
+  - bare command names resolve to `/bin/<name>`
+  - built-ins, argv, cwd, and PATH-like lookup are still out of scope
+- `echo` and `ls` are the current example utility programs that prove process launch and root-filesystem access from userland.
 
 ## Future Implications
 
