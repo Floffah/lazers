@@ -10,7 +10,7 @@ The long-term model is:
 - a terminal surface owns visible text rendering for a session
 - a terminal endpoint carries byte-stream input and output for that session
 - programs attach through `stdin`, `stdout`, and `stderr`
-- the shell is a future userland program attached to those standard streams
+- the default shell `lash` runs as a normal user process on top of that terminal endpoint and can launch other programs as child processes
 
 ## Current Foundation
 
