@@ -75,18 +75,25 @@ impl FramebufferConsole {
 
     pub fn write_str(&mut self, text: &str) {
         for byte in text.bytes() {
-            match byte {
-                b'\n' => self.new_line(),
-                _ => self.write_byte(byte),
-            }
+            self.write_terminal_byte(byte);
         }
     }
 
-    pub fn begin_input_region(&mut self) {
+    pub fn begin_terminal_session(&mut self) {
         self.input_floor = Some(self.cursor());
     }
 
-    pub fn backspace_input(&mut self) -> bool {
+    pub fn write_terminal_byte(&mut self, byte: u8) {
+        match byte {
+            b'\n' => self.new_line(),
+            0x7f => {
+                let _ = self.backspace_from_session();
+            }
+            _ => self.write_byte(byte),
+        }
+    }
+
+    fn backspace_from_session(&mut self) -> bool {
         let Some(floor) = self.input_floor else {
             return false;
         };
@@ -304,14 +311,16 @@ pub fn clear() {
     });
 }
 
-pub fn begin_input_region() {
+pub fn begin_terminal_session() {
     with_console(|console| {
-        console.begin_input_region();
+        console.begin_terminal_session();
     });
 }
 
-pub fn backspace_input() -> bool {
-    with_console_result(|console| console.backspace_input()).unwrap_or(false)
+pub fn write_terminal_byte(byte: u8) {
+    with_console(|console| {
+        console.write_terminal_byte(byte);
+    });
 }
 
 pub fn write_fmt(args: fmt::Arguments<'_>) {
@@ -329,17 +338,6 @@ where
     };
 
     operation(guard.get());
-}
-
-fn with_console_result<F, T>(operation: F) -> Option<T>
-where
-    F: FnOnce(&mut FramebufferConsole) -> T,
-{
-    let Some(mut guard) = GLOBAL_CONSOLE.try_lock() else {
-        return None;
-    };
-
-    Some(operation(guard.get()))
 }
 
 fn visible_height_pixels(framebuffer: FramebufferInfo) -> usize {

@@ -5,11 +5,15 @@
 mod macros;
 mod console;
 mod font;
+mod io;
 mod keyboard;
+mod task;
+mod terminal;
 
 use core::arch::{asm, global_asm};
 use core::panic::PanicInfo;
 use boot_info::{BootInfo, PixelFormat};
+use io::{IoHandle, StdioHandles};
 
 global_asm!(
     r#"
@@ -43,9 +47,20 @@ pub extern "sysv64" fn kernel_main(boot_info: *const BootInfo) -> ! {
         boot_info.framebuffer.height,
         pixel_format_name(boot_info.framebuffer.format)
     );
-    console::begin_input_region();
 
-    run_keyboard_echo_loop();
+    let endpoint = terminal::primary_endpoint();
+    let surface = terminal::TerminalSurface::new(endpoint);
+    let text_task = task::TextTask::new(
+        task::echo_task_entry,
+        StdioHandles::new(
+            IoHandle::terminal_input(endpoint),
+            IoHandle::terminal_output(endpoint),
+            IoHandle::terminal_output(endpoint),
+        ),
+    );
+    surface.begin_session();
+
+    run_terminal_loop(surface, text_task);
 }
 
 fn pixel_format_name(format: PixelFormat) -> &'static str {
@@ -64,26 +79,16 @@ fn halt_forever() -> ! {
     }
 }
 
-fn run_keyboard_echo_loop() -> ! {
+fn run_terminal_loop(surface: terminal::TerminalSurface, text_task: task::TextTask) -> ! {
     loop {
         keyboard::poll();
 
         while let Some(event) = keyboard::pop_event() {
-            match event.key {
-                keyboard::KeyCode::Enter if event.state == keyboard::KeyState::Pressed => {
-                    kprintln!();
-                    console::begin_input_region();
-                }
-                keyboard::KeyCode::Backspace if event.state == keyboard::KeyState::Pressed => {
-                    let _ = console::backspace_input();
-                }
-                _ => {
-                    if let Some(character) = keyboard::event_to_char(event) {
-                        kprint!("{}", character);
-                    }
-                }
-            }
+            surface.handle_key_event(event);
         }
+
+        text_task.run_step();
+        surface.flush_output();
 
         unsafe {
             asm!("pause", options(nomem, nostack, preserves_flags));

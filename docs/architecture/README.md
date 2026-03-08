@@ -10,4 +10,4 @@ Current focus areas include:
 - modular subsystem boundaries
 - low-friction configuration and service behavior
 - performance and simplicity on modest hardware
-
+- terminal/runtime boundaries that prepare for a future userland shell
