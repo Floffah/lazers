@@ -1,0 +1,193 @@
+#![no_std]
+
+//! Minimal Lazers userland runtime support.
+//!
+//! `liblazer` is the shared bootstrap layer for early user programs. It owns the
+//! low-level process entry path, the current `int 0x80` syscall ABI bindings,
+//! panic-to-exit behavior, and a tiny stdio-oriented text surface for userland
+//! programs that do not yet have a full standard library.
+
+use core::arch::global_asm;
+use core::fmt;
+use core::fmt::Write;
+use core::panic::PanicInfo;
+
+const SYS_READ: usize = 0;
+const SYS_WRITE: usize = 1;
+const SYS_YIELD: usize = 2;
+const SYS_EXIT: usize = 3;
+
+global_asm!(
+    r#"
+    .section .text._start,"ax"
+    .global _start
+_start:
+    call __liblazer_main
+1:
+    jmp 1b
+
+    .section .text.user_syscall0,"ax"
+    .global user_syscall0
+user_syscall0:
+    mov rax, rdi
+    int 0x80
+    ret
+
+    .section .text.user_syscall1,"ax"
+    .global user_syscall1
+user_syscall1:
+    mov rax, rdi
+    mov rdi, rsi
+    int 0x80
+    ret
+
+    .section .text.user_syscall3,"ax"
+    .global user_syscall3
+user_syscall3:
+    mov rax, rdi
+    mov rdi, rsi
+    mov rsi, rdx
+    mov rdx, rcx
+    int 0x80
+    ret
+"#
+);
+
+unsafe extern "C" {
+    fn user_syscall0(number: usize) -> usize;
+    fn user_syscall1(number: usize, arg0: usize) -> usize;
+    fn user_syscall3(number: usize, arg0: usize, arg1: usize, arg2: usize) -> usize;
+}
+
+unsafe extern "Rust" {
+    fn __liblazer_main() -> !;
+}
+
+/// Declares the Rust entrypoint for a Lazers user program.
+///
+/// The named function becomes the process' runtime entry without requiring each
+/// binary to define its own `_start` shim or ABI glue.
+#[macro_export]
+macro_rules! entry {
+    ($path:path) => {
+        #[unsafe(no_mangle)]
+        pub extern "Rust" fn __liblazer_main() -> ! {
+            let main: fn() -> ! = $path;
+            main()
+        }
+    };
+}
+
+/// Reads bytes from a process-owned descriptor into the provided buffer.
+pub fn read(fd: usize, buffer: &mut [u8]) -> usize {
+    unsafe { user_syscall3(SYS_READ, fd, buffer.as_mut_ptr() as usize, buffer.len()) }
+}
+
+/// Writes bytes to a process-owned descriptor from the provided buffer.
+pub fn write(fd: usize, buffer: &[u8]) -> usize {
+    unsafe { user_syscall3(SYS_WRITE, fd, buffer.as_ptr() as usize, buffer.len()) }
+}
+
+/// Reads from the current process' standard input stream.
+pub fn stdin_read(buffer: &mut [u8]) -> usize {
+    read(0, buffer)
+}
+
+/// Writes to the current process' standard output stream.
+pub fn stdout_write(buffer: &[u8]) -> usize {
+    write(1, buffer)
+}
+
+/// Writes to the current process' standard error stream.
+pub fn stderr_write(buffer: &[u8]) -> usize {
+    write(2, buffer)
+}
+
+/// Cooperatively yields the current process' thread.
+pub fn yield_now() {
+    unsafe {
+        let _ = user_syscall0(SYS_YIELD);
+    }
+}
+
+/// Terminates the current process and never returns.
+pub fn exit(code: usize) -> ! {
+    unsafe {
+        let _ = user_syscall1(SYS_EXIT, code);
+    }
+
+    loop {
+        core::hint::spin_loop();
+    }
+}
+
+/// Writes one formatted string to standard output.
+pub fn print(args: fmt::Arguments<'_>) {
+    let mut stdout = Stdout;
+    let _ = stdout.write_fmt(args);
+}
+
+/// Writes one formatted string to standard error.
+pub fn eprint(args: fmt::Arguments<'_>) {
+    let mut stderr = Stderr;
+    let _ = stderr.write_fmt(args);
+}
+
+#[doc(hidden)]
+pub struct Stdout;
+
+impl fmt::Write for Stdout {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let _ = stdout_write(s.as_bytes());
+        Ok(())
+    }
+}
+
+#[doc(hidden)]
+pub struct Stderr;
+
+impl fmt::Write for Stderr {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let _ = stderr_write(s.as_bytes());
+        Ok(())
+    }
+}
+
+#[macro_export]
+macro_rules! print {
+    ($($arg:tt)*) => {
+        $crate::print(core::format_args!($($arg)*))
+    };
+}
+
+#[macro_export]
+macro_rules! println {
+    () => {
+        $crate::print(core::format_args!("\n"))
+    };
+    ($($arg:tt)*) => {
+        $crate::print(core::format_args!("{}\n", core::format_args!($($arg)*)))
+    };
+}
+
+#[macro_export]
+macro_rules! eprint {
+    ($($arg:tt)*) => {
+        $crate::eprint(core::format_args!($($arg)*))
+    };
+}
+
+#[macro_export]
+macro_rules! eprintln {
+    () => {
+        $crate::eprint(core::format_args!("\n"))
+    };
+    ($($arg:tt)*) => {
+        $crate::eprint(core::format_args!("{}\n", core::format_args!($($arg)*)))
+    };
+}
+
+#[panic_handler]
+fn panic(_info: &PanicInfo) -> ! {
+    exit(1)
+}

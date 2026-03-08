@@ -5,6 +5,7 @@ members = [
     "kernel/kernel",
     "libs/boot-info",
     "libs/elf",
+    "libs/liblazer",
     "user/echo",
 ]
 
@@ -16,6 +17,7 @@ publish = false
 [workspace.dependencies]
 boot-info = { path = "libs/boot-info" }
 elf = { path = "libs/elf" }
+liblazer = { path = "libs/liblazer" }
 
 [profile.dev]
 panic = "abort"

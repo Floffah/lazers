@@ -55,7 +55,7 @@ The repository now implements the first bootable path as:
   - a `FAT32` EFI System Partition that holds `BOOTX64.EFI` and `kernel.elf`
   - a `FAT32` system partition that is mounted as `/` and stages `/bin/echo`
 
-The current success condition is still intentionally narrow: the loader exits boot services, the kernel takes control, replaces the firmware page tables, mounts the system partition, and runs one disk-backed user-mode text program through the terminal/stdin/stdout architecture that future userland programs will reuse.
+The current success condition is still intentionally narrow: the loader exits boot services, the kernel takes control, replaces the firmware page tables, mounts the system partition, and runs one disk-backed user-mode text program through the terminal/stdin/stdout architecture that future userland programs will reuse. Early user binaries now build on a shared `liblazer` runtime crate rather than carrying their own bootstrap and syscall glue.
 
 ## Host Notes
 
