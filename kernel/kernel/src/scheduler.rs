@@ -10,11 +10,13 @@ use core::cell::UnsafeCell;
 
 use crate::arch;
 use crate::io::{KernelObject, StdioHandles};
-use crate::memory::AddressSpace;
+use crate::memory::{AddressSpace, LoadedUserProgram, OwnedPages};
 use crate::process::{Process, ProcessId};
+use crate::storage;
 use crate::terminal::TerminalEndpoint;
 use crate::thread::{
-    KernelThreadEntry, Thread, ThreadContext, ThreadId, ThreadStart, ThreadState, UserThreadStart,
+    KernelThreadEntry, Thread, ThreadContext, ThreadId, ThreadStart, ThreadState,
+    UserThreadStart,
 };
 
 const MAX_PROCESSES: usize = 4;
@@ -29,12 +31,12 @@ unsafe extern "C" {
     fn context_switch(current: *mut ThreadContext, next: *const ThreadContext);
 }
 
-#[derive(Clone, Copy)]
 /// Process creation inputs for the bootstrap runtime.
 pub struct ProcessConfig {
     pub name: &'static str,
     pub address_space: AddressSpace,
     pub terminal_endpoint: Option<&'static TerminalEndpoint>,
+    pub owned_pages: OwnedPages,
 }
 
 /// Resets the global scheduler state to an empty runtime.
@@ -45,7 +47,11 @@ pub fn init() {
 /// Creates a process and installs its initial stdio bindings if a terminal
 /// endpoint was supplied.
 pub fn create_process(config: ProcessConfig) -> ProcessId {
-    with_scheduler_mut(|scheduler| scheduler.create_process(config))
+    with_scheduler_mut(|scheduler| {
+        scheduler
+            .try_create_process(config)
+            .expect("process capacity exhausted")
+    })
 }
 
 /// Creates a kernel-mode thread owned by an existing process.
@@ -55,7 +61,9 @@ pub fn create_kernel_thread(
     entry: KernelThreadEntry,
 ) -> ThreadId {
     with_scheduler_mut(|scheduler| {
-        scheduler.create_thread(name, process_id, ThreadStart::Kernel(entry))
+        scheduler
+            .try_create_thread(name, process_id, ThreadStart::Kernel(entry))
+            .expect("thread capacity exhausted")
     })
 }
 
@@ -67,7 +75,8 @@ pub fn create_user_thread(
     user_stack_top: u64,
 ) -> ThreadId {
     with_scheduler_mut(|scheduler| {
-        scheduler.create_thread(
+        scheduler
+            .try_create_thread(
             name,
             process_id,
             ThreadStart::User(UserThreadStart {
@@ -75,6 +84,7 @@ pub fn create_user_thread(
                 user_stack_top,
             }),
         )
+            .expect("thread capacity exhausted")
     })
 }
 
@@ -83,6 +93,31 @@ pub fn mark_idle_thread(thread_id: ThreadId) {
     with_scheduler_mut(|scheduler| {
         scheduler.idle_thread = Some(thread_id);
     });
+}
+
+/// Loads a child executable from the runtime root filesystem, runs it with
+/// inherited stdio, and blocks until it exits.
+pub fn spawn_user_process_and_wait(path: &str) -> Option<usize> {
+    let file = storage::read_root_file(path).ok()?;
+    let program = match crate::memory::load_user_program(file.as_slice()) {
+        Ok(program) => program,
+        Err(_) => {
+            file.release();
+            return None;
+        }
+    };
+    file.release();
+
+    let current = with_scheduler(|scheduler| scheduler.current_thread)?;
+    let child_process = match with_scheduler_mut(|scheduler| scheduler.spawn_child_process(current, program)) {
+        Ok(process_id) => process_id,
+        Err(program) => {
+            program.owned_pages.release();
+            return None;
+        }
+    };
+
+    wait_for_child(child_process)
 }
 
 /// Transfers control from bootstrap code into the first runnable thread.
@@ -128,19 +163,38 @@ pub fn yield_now() {
     }
 }
 
-/// Blocks the current thread and schedules a replacement.
-///
-/// This is used by fatal user-thread conditions and explicit exits until a
-/// fuller wakeup and process-lifecycle model exists.
-pub fn block_current_thread_and_schedule() -> ! {
-    let switch = with_scheduler_mut(|scheduler| scheduler.prepare_switch(true));
+/// Blocks the current thread until the given child process exits, then returns
+/// the child's exit status.
+pub fn wait_for_child(child_process: ProcessId) -> Option<usize> {
+    let switch = with_scheduler_mut(|scheduler| scheduler.prepare_wait_for_child(child_process))?;
+
+    arch::activate_address_space(switch.next_space, switch.next_stack_top);
+    unsafe {
+        context_switch(switch.current_context, switch.next_context);
+    }
+
+    with_scheduler_mut(|scheduler| {
+        let current = scheduler.current_thread?;
+        scheduler.thread_mut(current).take_wait_result()
+    })
+}
+
+/// Terminates the current user process, wakes any waiting parent thread, and
+/// never returns.
+pub fn exit_current_process(status: usize) -> ! {
+    let switch = with_scheduler_mut(|scheduler| scheduler.prepare_exit_current_process(status));
     let Some(switch) = switch else {
         crate::halt_forever();
     };
 
     arch::activate_address_space(switch.next_space, switch.next_stack_top);
     unsafe {
-        context_switch(switch.current_context, switch.next_context);
+        with_scheduler_mut(|scheduler| {
+            context_switch(
+                &mut scheduler.bootstrap_context as *mut ThreadContext,
+                switch.next_context,
+            );
+        });
     }
 
     crate::halt_forever()
@@ -231,7 +285,7 @@ struct SchedulerState {
 impl SchedulerState {
     const fn new() -> Self {
         Self {
-            processes: [None; MAX_PROCESSES],
+            processes: [const { None }; MAX_PROCESSES],
             threads: [None; MAX_THREADS],
             stacks: [ThreadStack::new(); MAX_THREADS],
             current_thread: None,
@@ -244,43 +298,38 @@ impl SchedulerState {
         *self = Self::new();
     }
 
-    fn create_process(&mut self, config: ProcessConfig) -> ProcessId {
+    fn try_create_process(&mut self, config: ProcessConfig) -> Option<ProcessId> {
         let slot = self
             .processes
             .iter()
-            .position(|process| process.is_none())
-            .expect("process capacity exhausted");
+            .position(|process| process.is_none())?;
         let process_id = ProcessId(slot);
-        let mut process = Process::new(process_id, config.name, config.address_space);
+        let mut process = Process::new(process_id, config.name, config.address_space, config.owned_pages);
 
         if let Some(endpoint) = config.terminal_endpoint {
             let stdin = process
-                .install_handle(KernelObject::TerminalEndpoint(endpoint))
-                .expect("stdin handle capacity exhausted");
+                .install_handle(KernelObject::TerminalEndpoint(endpoint))?;
             let stdout = process
-                .install_handle(KernelObject::TerminalEndpoint(endpoint))
-                .expect("stdout handle capacity exhausted");
+                .install_handle(KernelObject::TerminalEndpoint(endpoint))?;
             let stderr = process
-                .install_handle(KernelObject::TerminalEndpoint(endpoint))
-                .expect("stderr handle capacity exhausted");
+                .install_handle(KernelObject::TerminalEndpoint(endpoint))?;
             process.set_stdio(StdioHandles::new(stdin, stdout, stderr));
         }
 
         self.processes[slot] = Some(process);
-        process_id
+        Some(process_id)
     }
 
-    fn create_thread(
+    fn try_create_thread(
         &mut self,
         name: &'static str,
         process_id: ProcessId,
         start: ThreadStart,
-    ) -> ThreadId {
+    ) -> Option<ThreadId> {
         let slot = self
             .threads
             .iter()
-            .position(|thread| thread.is_none())
-            .expect("thread capacity exhausted");
+            .position(|thread| thread.is_none())?;
         let thread_id = ThreadId(slot);
         let (context, kernel_stack_top) = self.initial_context_for(slot);
         self.threads[slot] = Some(Thread::new(
@@ -291,7 +340,68 @@ impl SchedulerState {
             context,
             kernel_stack_top,
         ));
-        thread_id
+        Some(thread_id)
+    }
+
+    fn spawn_child_process(
+        &mut self,
+        parent_thread: ThreadId,
+        program: LoadedUserProgram,
+    ) -> Result<ProcessId, LoadedUserProgram> {
+        let LoadedUserProgram {
+            address_space,
+            entry_point,
+            user_stack_top,
+            owned_pages,
+        } = program;
+        let parent_process_id = self.thread(parent_thread).process_id();
+        let Some(slot) = self.processes.iter().position(|process| process.is_none()) else {
+            return Err(LoadedUserProgram {
+                address_space,
+                entry_point,
+                user_stack_top,
+                owned_pages,
+            });
+        };
+        let process_id = ProcessId(slot);
+        let mut child = Process::new(process_id, "user-child", address_space, owned_pages);
+
+        if self
+            .process(parent_process_id)
+            .inherit_stdio_into(&mut child)
+            .is_none()
+        {
+            return Err(LoadedUserProgram {
+                address_space: child.address_space(),
+                entry_point,
+                user_stack_top,
+                owned_pages: child.release_owned_pages(),
+            });
+        }
+
+        child.set_waiting_thread(parent_thread);
+        self.processes[slot] = Some(child);
+        if self
+            .try_create_thread(
+                "user-child-main",
+                process_id,
+                ThreadStart::User(UserThreadStart {
+                    entry_point,
+                    user_stack_top,
+                }),
+            )
+            .is_none()
+        {
+            let child = self.processes[slot].take().expect("child process missing");
+            return Err(LoadedUserProgram {
+                address_space: child.address_space(),
+                entry_point,
+                user_stack_top,
+                owned_pages: child.release_owned_pages(),
+            });
+        }
+
+        Ok(process_id)
     }
 
     fn prepare_switch(&mut self, block_current: bool) -> Option<PreparedSwitch> {
@@ -317,6 +427,61 @@ impl SchedulerState {
 
         Some(PreparedSwitch {
             current_context,
+            next_context,
+            next_space: activation.address_space,
+            next_stack_top: activation.kernel_stack_top,
+        })
+    }
+
+    fn prepare_wait_for_child(&mut self, child_process: ProcessId) -> Option<PreparedSwitch> {
+        let current = self.current_thread?;
+        self.thread_mut(current).block_for_child(child_process);
+
+        let next = self.next_runnable_thread(Some(current))?;
+        self.thread_mut(next).set_state(ThreadState::Running);
+        self.current_thread = Some(next);
+
+        let current_context = self.thread_context(current) as *mut ThreadContext;
+        let next_context = self.thread_context(next) as *const ThreadContext;
+        let activation = self.activation(next);
+
+        Some(PreparedSwitch {
+            current_context,
+            next_context,
+            next_space: activation.address_space,
+            next_stack_top: activation.kernel_stack_top,
+        })
+    }
+
+    fn prepare_exit_current_process(&mut self, status: usize) -> Option<ExitedThreadSwitch> {
+        let current_thread = self.current_thread?;
+        let process_id = self.thread(current_thread).process_id();
+
+        let waiting_thread = {
+            let process = self.process_mut(process_id);
+            process.mark_exited(status);
+            process.take_waiting_thread()
+        };
+
+        if let Some(waiting_thread) = waiting_thread {
+            let thread = self.thread_mut(waiting_thread);
+            thread.set_wait_result(status);
+            thread.wake();
+        }
+
+        self.threads[current_thread.0] = None;
+        let process = self.processes[process_id.0]
+            .take()
+            .expect("current process missing during exit");
+        process.release_resources();
+
+        let next = self.next_runnable_thread(None)?;
+        self.current_thread = Some(next);
+        self.thread_mut(next).set_state(ThreadState::Running);
+        let activation = self.activation(next);
+        let next_context = self.thread_context(next) as *const ThreadContext;
+
+        Some(ExitedThreadSwitch {
             next_context,
             next_space: activation.address_space,
             next_stack_top: activation.kernel_stack_top,
@@ -396,6 +561,12 @@ impl SchedulerState {
             .expect("invalid process id")
     }
 
+    fn process_mut(&mut self, process_id: ProcessId) -> &mut Process {
+        self.processes[process_id.0]
+            .as_mut()
+            .expect("invalid process id")
+    }
+
     fn thread(&self, thread_id: ThreadId) -> &Thread {
         self.threads[thread_id.0]
             .as_ref()
@@ -415,6 +586,12 @@ impl SchedulerState {
 
 struct PreparedSwitch {
     current_context: *mut ThreadContext,
+    next_context: *const ThreadContext,
+    next_space: AddressSpace,
+    next_stack_top: u64,
+}
+
+struct ExitedThreadSwitch {
     next_context: *const ThreadContext,
     next_space: AddressSpace,
     next_stack_top: u64,

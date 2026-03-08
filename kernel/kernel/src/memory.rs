@@ -16,8 +16,9 @@ pub const USER_IMAGE_BASE: u64 = 0x0000_0000_0040_0000;
 pub const USER_STACK_TOP: u64 = 0x0000_0000_0080_0000;
 pub const USER_STACK_PAGES: usize = 16;
 
-const MAX_USABLE_REGIONS: usize = 32;
 const MAX_SEGMENT_PAGES: usize = 128;
+const MAX_FREE_RANGES: usize = 128;
+const MAX_OWNED_PAGES: usize = MAX_SEGMENT_PAGES + USER_STACK_PAGES + 32;
 const PAGE_PRESENT: u64 = 1 << 0;
 const PAGE_WRITABLE: u64 = 1 << 1;
 const PAGE_USER: u64 = 1 << 2;
@@ -43,12 +44,74 @@ impl AddressSpace {
     }
 }
 
-#[derive(Clone, Copy)]
 /// Result of loading one user ELF into a newly created address space.
 pub struct LoadedUserProgram {
     pub address_space: AddressSpace,
     pub entry_point: u64,
     pub user_stack_top: u64,
+    pub owned_pages: OwnedPages,
+}
+
+/// Reclaimable contiguous kernel buffer backed by physical pages.
+pub struct KernelBuffer {
+    start_paddr: u64,
+    len: usize,
+    page_count: usize,
+}
+
+impl KernelBuffer {
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        unsafe { slice::from_raw_parts(self.start_paddr as *const u8, self.len) }
+    }
+
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        unsafe { slice::from_raw_parts_mut(self.start_paddr as *mut u8, self.len) }
+    }
+
+    pub fn release(self) {
+        with_state_mut(|state| {
+            state.free_contiguous_pages(self.start_paddr, self.page_count);
+        });
+    }
+}
+
+/// Physical pages owned by one user process image.
+pub struct OwnedPages {
+    pages: [u64; MAX_OWNED_PAGES],
+    len: usize,
+}
+
+impl OwnedPages {
+    pub const fn empty() -> Self {
+        Self {
+            pages: [0; MAX_OWNED_PAGES],
+            len: 0,
+        }
+    }
+
+    fn push(&mut self, page: u64) -> Result<(), MemoryError> {
+        if self.len >= self.pages.len() {
+            return Err(MemoryError::OwnedPageCapacityExceeded);
+        }
+
+        self.pages[self.len] = page;
+        self.len += 1;
+        Ok(())
+    }
+
+    pub fn release(self) {
+        let mut index = 0;
+        while index < self.len {
+            with_state_mut(|state| {
+                state.free_page(self.pages[index]);
+            });
+            index += 1;
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -61,6 +124,7 @@ pub enum MemoryError {
     Elf(ElfError),
     UserImageOutOfRange,
     SegmentOverlapCapacityExceeded,
+    OwnedPageCapacityExceeded,
 }
 
 impl MemoryError {
@@ -74,6 +138,7 @@ impl MemoryError {
             Self::Elf(error) => elf_error_as_str(error),
             Self::UserImageOutOfRange => "user image falls outside the fixed user layout",
             Self::SegmentOverlapCapacityExceeded => "user image mapping capacity is exhausted",
+            Self::OwnedPageCapacityExceeded => "user image ownership tracking capacity is exhausted",
         }
     }
 }
@@ -89,7 +154,7 @@ pub fn init(boot_info: &BootInfo) -> Result<(), MemoryError> {
         state.initialize_allocator(boot_info)?;
 
         let root_paddr = state.allocate_page_pre_switch()?;
-        let mut builder = AddressSpaceBuilder::new(root_paddr);
+        let mut builder = AddressSpaceBuilder::new(root_paddr, None);
         builder.map_identity_2m_range(
             PHYS_WINDOW_START,
             state.phys_window_end,
@@ -130,14 +195,18 @@ pub fn kernel_address_space() -> AddressSpace {
 ///
 /// This is primarily used by bootstrap subsystems such as storage that need a
 /// stable scratch buffer without yet having a general kernel heap.
-pub fn allocate_kernel_buffer(size: usize) -> Result<&'static mut [u8], MemoryError> {
+pub fn allocate_kernel_buffer(size: usize) -> Result<KernelBuffer, MemoryError> {
     if size == 0 {
         return Err(MemoryError::InvalidKernelBufferSize);
     }
 
-    let page_count = align_up(size as u64, PAGE_SIZE as u64) / PAGE_SIZE as u64;
-    let start = with_state_mut(|state| state.allocate_contiguous_pages(page_count as usize))?;
-    Ok(unsafe { slice::from_raw_parts_mut(start as *mut u8, size) })
+    let page_count = (align_up(size as u64, PAGE_SIZE as u64) / PAGE_SIZE as u64) as usize;
+    let start = with_state_mut(|state| state.allocate_contiguous_pages(page_count))?;
+    Ok(KernelBuffer {
+        start_paddr: start,
+        len: size,
+        page_count,
+    })
 }
 
 /// Allocates one zeroed physical page for kernel-owned structures.
@@ -155,7 +224,7 @@ pub fn map_kernel_identity_range(start: u64, end: u64, writable: bool) -> Result
         let kernel_space = state
             .kernel_space
             .ok_or(MemoryError::AddressSpaceUninitialized)?;
-        let mut builder = AddressSpaceBuilder::new(kernel_space.root_paddr());
+        let mut builder = AddressSpaceBuilder::new(kernel_space.root_paddr(), None);
         builder.map_identity_4k_range(start, end, flags)
     })?;
 
@@ -176,92 +245,105 @@ pub fn load_user_program(bytes: &[u8]) -> Result<LoadedUserProgram, MemoryError>
     }
 
     with_state_mut(|state| {
-        let kernel_space = state
-            .kernel_space
-            .ok_or(MemoryError::AddressSpaceUninitialized)?;
-        let root_paddr = state.allocate_page()?;
-        let mut builder = AddressSpaceBuilder::new(root_paddr);
-        builder.map_identity_2m_range(
-            PHYS_WINDOW_START,
-            state.phys_window_end,
-            PAGE_PRESENT | PAGE_WRITABLE,
-        )?;
-
-        if state.framebuffer_start != 0
-            && (state.framebuffer_start < PHYS_WINDOW_START
-                || state.framebuffer_end > state.phys_window_end)
-        {
-            builder.map_identity_4k_range(
-                state.framebuffer_start,
-                state.framebuffer_end,
+        let mut owned_pages = OwnedPages::empty();
+        let result = (|| {
+            let kernel_space = state
+                .kernel_space
+                .ok_or(MemoryError::AddressSpaceUninitialized)?;
+            let root_paddr = state.allocate_page()?;
+            owned_pages.push(root_paddr)?;
+            let mut builder = AddressSpaceBuilder::new(root_paddr, Some(&mut owned_pages));
+            builder.map_identity_2m_range(
+                PHYS_WINDOW_START,
+                state.phys_window_end,
                 PAGE_PRESENT | PAGE_WRITABLE,
             )?;
-        }
 
-        // Keep the active kernel mappings intact while loading and dispatching the user program.
-        crate::arch::load_page_table(kernel_space.root_paddr());
-
-        let mut pages = UserPageMap::new();
-        for header_result in elf.program_headers() {
-            let header = header_result.map_err(MemoryError::Elf)?;
-            if header.kind != PT_LOAD {
-                continue;
-            }
-
-            let segment_start = header.virtual_address;
-            let segment_end = header
-                .virtual_address
-                .checked_add(header.memory_size)
-                .ok_or(MemoryError::UserImageOutOfRange)?;
-            let user_stack_base =
-                USER_STACK_TOP - ((USER_STACK_PAGES as u64) * (PAGE_SIZE as u64));
-
-            if segment_start < USER_IMAGE_BASE
-                || segment_end > user_stack_base
-                || header.memory_size < header.file_size
+            if state.framebuffer_start != 0
+                && (state.framebuffer_start < PHYS_WINDOW_START
+                    || state.framebuffer_end > state.phys_window_end)
             {
-                return Err(MemoryError::UserImageOutOfRange);
+                builder.map_identity_4k_range(
+                    state.framebuffer_start,
+                    state.framebuffer_end,
+                    PAGE_PRESENT | PAGE_WRITABLE,
+                )?;
             }
 
-            let page_start = align_down(segment_start, PAGE_SIZE as u64);
-            let page_end = align_up(segment_end, PAGE_SIZE as u64);
-            let page_flags = PAGE_PRESENT
-                | PAGE_USER
-                | if (header.flags & PF_W) != 0 {
-                    PAGE_WRITABLE
-                } else {
-                    0
-                };
+            // Keep the active kernel mappings intact while loading and dispatching the user program.
+            crate::arch::load_page_table(kernel_space.root_paddr());
 
-            let mut virt = page_start;
-            while virt < page_end {
-                if !pages.contains(virt) {
-                    let phys = state.allocate_page()?;
-                    builder.map_4k(virt, phys, page_flags)?;
-                    pages.insert(virt, phys)?;
+            let mut pages = UserPageMap::new();
+            for header_result in elf.program_headers() {
+                let header = header_result.map_err(MemoryError::Elf)?;
+                if header.kind != PT_LOAD {
+                    continue;
                 }
-                virt += PAGE_SIZE as u64;
+
+                let segment_start = header.virtual_address;
+                let segment_end = header
+                    .virtual_address
+                    .checked_add(header.memory_size)
+                    .ok_or(MemoryError::UserImageOutOfRange)?;
+                let user_stack_base =
+                    USER_STACK_TOP - ((USER_STACK_PAGES as u64) * (PAGE_SIZE as u64));
+
+                if segment_start < USER_IMAGE_BASE
+                    || segment_end > user_stack_base
+                    || header.memory_size < header.file_size
+                {
+                    return Err(MemoryError::UserImageOutOfRange);
+                }
+
+                let page_start = align_down(segment_start, PAGE_SIZE as u64);
+                let page_end = align_up(segment_end, PAGE_SIZE as u64);
+                let page_flags = PAGE_PRESENT
+                    | PAGE_USER
+                    | if (header.flags & PF_W) != 0 {
+                        PAGE_WRITABLE
+                    } else {
+                        0
+                    };
+
+                let mut virt = page_start;
+                while virt < page_end {
+                    if !pages.contains(virt) {
+                        let phys = state.allocate_page()?;
+                        builder.map_4k(virt, phys, page_flags)?;
+                        pages.insert(virt, phys)?;
+                        owned_pages.push(phys)?;
+                    }
+                    virt += PAGE_SIZE as u64;
+                }
+
+                let file_range = header
+                    .file_range(bytes.len())
+                    .map_err(MemoryError::Elf)?;
+                pages.copy_into(header.virtual_address, &bytes[file_range])?;
             }
 
-            let file_range = header
-                .file_range(bytes.len())
-                .map_err(MemoryError::Elf)?;
-            pages.copy_into(header.virtual_address, &bytes[file_range])?;
+            let user_stack_base = USER_STACK_TOP - ((USER_STACK_PAGES as u64) * (PAGE_SIZE as u64));
+            let mut stack_page = user_stack_base;
+            while stack_page < USER_STACK_TOP {
+                let phys = state.allocate_page()?;
+                builder.map_4k(stack_page, phys, PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER)?;
+                owned_pages.push(phys)?;
+                stack_page += PAGE_SIZE as u64;
+            }
+
+            Ok(LoadedUserProgram {
+                address_space: AddressSpace::new(root_paddr),
+                entry_point,
+                user_stack_top: USER_STACK_TOP,
+                owned_pages: core::mem::replace(&mut owned_pages, OwnedPages::empty()),
+            })
+        })();
+
+        if result.is_err() {
+            owned_pages.release();
         }
 
-        let user_stack_base = USER_STACK_TOP - ((USER_STACK_PAGES as u64) * (PAGE_SIZE as u64));
-        let mut stack_page = user_stack_base;
-        while stack_page < USER_STACK_TOP {
-            let phys = state.allocate_page()?;
-            builder.map_4k(stack_page, phys, PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER)?;
-            stack_page += PAGE_SIZE as u64;
-        }
-
-        Ok(LoadedUserProgram {
-            address_space: AddressSpace::new(root_paddr),
-            entry_point,
-            user_stack_top: USER_STACK_TOP,
-        })
+        result
     })
 }
 
@@ -399,17 +481,25 @@ impl MemoryState {
     fn allocate_contiguous_pages(&mut self, count: usize) -> Result<u64, MemoryError> {
         self.allocator.allocate_contiguous_pages(count)
     }
+
+    fn free_page(&mut self, page: u64) {
+        self.allocator.free_contiguous_pages(page, 1);
+    }
+
+    fn free_contiguous_pages(&mut self, start: u64, count: usize) {
+        self.allocator.free_contiguous_pages(start, count);
+    }
 }
 
 struct PhysicalAllocator {
-    regions: [PhysicalRegion; MAX_USABLE_REGIONS],
+    regions: [PhysicalRegion; MAX_FREE_RANGES],
     count: usize,
 }
 
 impl PhysicalAllocator {
     const fn new() -> Self {
         Self {
-            regions: [PhysicalRegion::empty(); MAX_USABLE_REGIONS],
+            regions: [PhysicalRegion::empty(); MAX_FREE_RANGES],
             count: 0,
         }
     }
@@ -419,12 +509,7 @@ impl PhysicalAllocator {
     }
 
     fn add_region(&mut self, start: u64, end: u64) -> Result<(), MemoryError> {
-        if self.count >= self.regions.len() {
-            return Err(MemoryError::NoUsableMemory);
-        }
-
-        self.regions[self.count] = PhysicalRegion::new(start, end);
-        self.count += 1;
+        self.insert_range(start, end);
         Ok(())
     }
 
@@ -433,6 +518,9 @@ impl PhysicalAllocator {
         while index < self.count {
             let region = &mut self.regions[index];
             if let Some(page) = region.allocate_page() {
+                if region.is_empty() {
+                    self.remove_region(index);
+                }
                 unsafe {
                     write_bytes(page as *mut u8, 0, PAGE_SIZE);
                 }
@@ -449,6 +537,9 @@ impl PhysicalAllocator {
         while index < self.count {
             let region = &mut self.regions[index];
             if let Some(start) = region.allocate_contiguous_pages(count) {
+                if region.is_empty() {
+                    self.remove_region(index);
+                }
                 unsafe {
                     write_bytes(start as *mut u8, 0, count * PAGE_SIZE);
                 }
@@ -459,60 +550,128 @@ impl PhysicalAllocator {
 
         Err(MemoryError::AllocatorExhausted)
     }
+
+    fn free_contiguous_pages(&mut self, start: u64, count: usize) {
+        if count == 0 {
+            return;
+        }
+
+        let bytes = (count as u64) * PAGE_SIZE as u64;
+        self.insert_range(start, start + bytes);
+    }
+
+    fn insert_range(&mut self, start: u64, end: u64) {
+        if start >= end {
+            return;
+        }
+
+        let mut merged_start = start;
+        let mut merged_end = end;
+        let mut index = 0;
+
+        while index < self.count {
+            let region = self.regions[index];
+            if region.end < merged_start || region.start > merged_end {
+                index += 1;
+                continue;
+            }
+
+            merged_start = merged_start.min(region.start);
+            merged_end = merged_end.max(region.end);
+            self.remove_region(index);
+        }
+
+        assert!(self.count < self.regions.len(), "allocator free-range capacity exhausted");
+
+        let mut insert_at = 0;
+        while insert_at < self.count && self.regions[insert_at].start < merged_start {
+            insert_at += 1;
+        }
+
+        let mut shift = self.count;
+        while shift > insert_at {
+            self.regions[shift] = self.regions[shift - 1];
+            shift -= 1;
+        }
+
+        self.regions[insert_at] = PhysicalRegion::new(merged_start, merged_end);
+        self.count += 1;
+    }
+
+    fn remove_region(&mut self, index: usize) {
+        let mut shift = index;
+        while shift + 1 < self.count {
+            self.regions[shift] = self.regions[shift + 1];
+            shift += 1;
+        }
+        if self.count > 0 {
+            self.count -= 1;
+            self.regions[self.count] = PhysicalRegion::empty();
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
 struct PhysicalRegion {
-    next: u64,
+    start: u64,
     end: u64,
 }
 
 impl PhysicalRegion {
     const fn empty() -> Self {
-        Self { next: 0, end: 0 }
+        Self { start: 0, end: 0 }
     }
 
     const fn new(start: u64, end: u64) -> Self {
-        Self { next: start, end }
+        Self { start, end }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.start == 0 || self.start >= self.end
     }
 
     fn allocate_page(&mut self) -> Option<u64> {
-        if self.next == 0 || self.next >= self.end {
+        if self.is_empty() {
             return None;
         }
 
-        let page = self.next;
-        self.next = self.next.checked_add(PAGE_SIZE as u64)?;
-        if self.next > self.end {
+        let page = self.start;
+        let next = self.start.checked_add(PAGE_SIZE as u64)?;
+        if next > self.end {
             return None;
         }
+        self.start = next;
         Some(page)
     }
 
     fn allocate_contiguous_pages(&mut self, count: usize) -> Option<u64> {
-        if count == 0 || self.next == 0 || self.next >= self.end {
+        if count == 0 || self.is_empty() {
             return None;
         }
 
         let bytes = (count as u64).checked_mul(PAGE_SIZE as u64)?;
-        let end = self.next.checked_add(bytes)?;
+        let end = self.start.checked_add(bytes)?;
         if end > self.end {
             return None;
         }
 
-        let start = self.next;
-        self.next = end;
+        let start = self.start;
+        self.start = end;
         Some(start)
     }
 }
 
 struct AddressSpaceBuilder {
     root_paddr: u64,
+    owned_pages: Option<*mut OwnedPages>,
 }
 
 impl AddressSpaceBuilder {
-    fn new(root_paddr: u64) -> Self {
-        Self { root_paddr }
+    fn new(root_paddr: u64, owned_pages: Option<&mut OwnedPages>) -> Self {
+        Self {
+            root_paddr,
+            owned_pages: owned_pages.map(|owned_pages| owned_pages as *mut OwnedPages),
+        }
     }
 
     fn map_identity_2m_range(
@@ -596,6 +755,11 @@ impl AddressSpaceBuilder {
         }
 
         let child = with_state_mut(|state| state.allocate_page())?;
+        if let Some(owned_pages) = self.owned_pages {
+            unsafe {
+                (*owned_pages).push(child)?;
+            }
+        }
         unsafe {
             let table = page_table_mut(table_paddr);
             table.entries[index] = child | PAGE_TABLE_FLAGS | extra_flags;

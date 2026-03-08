@@ -11,6 +11,7 @@ const SYS_READ: u64 = 0;
 const SYS_WRITE: u64 = 1;
 const SYS_YIELD: u64 = 2;
 const SYS_EXIT: u64 = 3;
+const SYS_SPAWN_WAIT: u64 = 4;
 
 /// Dispatches a syscall trap frame in place.
 ///
@@ -29,7 +30,10 @@ pub fn dispatch(frame: &mut TrapFrame) {
             frame.rax = 0;
         }
         SYS_EXIT => {
-            crate::scheduler::block_current_thread_and_schedule();
+            crate::scheduler::exit_current_process(frame.rdi as usize);
+        }
+        SYS_SPAWN_WAIT => {
+            frame.rax = syscall_spawn_wait(frame.rdi, frame.rsi as usize) as u64;
         }
         _ => {
             frame.rax = 0;
@@ -51,4 +55,18 @@ fn syscall_write(fd: usize, buffer_address: u64, len: usize) -> usize {
     };
 
     crate::scheduler::current_process_write(fd, buffer)
+}
+
+fn syscall_spawn_wait(path_address: u64, path_len: usize) -> usize {
+    let Some(path_bytes) = memory::user_slice(path_address, path_len) else {
+        return usize::MAX;
+    };
+    let Ok(path) = core::str::from_utf8(path_bytes) else {
+        return usize::MAX;
+    };
+    if !path.starts_with('/') {
+        return usize::MAX;
+    }
+
+    crate::scheduler::spawn_user_process_and_wait(path).unwrap_or(usize::MAX)
 }

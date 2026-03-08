@@ -44,6 +44,13 @@ pub enum ThreadState {
     Blocked,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Reason a blocked thread is sleeping instead of remaining runnable.
+pub enum ThreadBlockReason {
+    None,
+    WaitingForChild(crate::process::ProcessId),
+}
+
 /// Function signature for kernel-mode thread entrypoints.
 pub type KernelThreadEntry = fn() -> !;
 
@@ -70,6 +77,8 @@ pub struct Thread {
     process_id: crate::process::ProcessId,
     start: ThreadStart,
     state: ThreadState,
+    block_reason: ThreadBlockReason,
+    wait_result: Option<usize>,
     context: ThreadContext,
     kernel_stack_top: u64,
 }
@@ -91,6 +100,8 @@ impl Thread {
             process_id,
             start,
             state: ThreadState::Runnable,
+            block_reason: ThreadBlockReason::None,
+            wait_result: None,
             context,
             kernel_stack_top,
         }
@@ -119,6 +130,30 @@ impl Thread {
     /// Updates the thread's scheduler state.
     pub fn set_state(&mut self, state: ThreadState) {
         self.state = state;
+    }
+
+    /// Marks the thread as blocked while waiting for a child to exit.
+    pub fn block_for_child(&mut self, process_id: crate::process::ProcessId) {
+        self.state = ThreadState::Blocked;
+        self.block_reason = ThreadBlockReason::WaitingForChild(process_id);
+    }
+
+    /// Clears any blocking reason and makes the thread runnable again.
+    pub fn wake(&mut self) {
+        self.state = ThreadState::Runnable;
+        self.block_reason = ThreadBlockReason::None;
+    }
+
+    /// Stores the result that should be observed when the blocked thread resumes.
+    pub fn set_wait_result(&mut self, status: usize) {
+        self.wait_result = Some(status);
+    }
+
+    /// Consumes the current wait result, if one exists.
+    pub fn take_wait_result(&mut self) -> Option<usize> {
+        let result = self.wait_result;
+        self.wait_result = None;
+        result
     }
 
     /// Exposes the mutable saved context used by the assembly context switcher.

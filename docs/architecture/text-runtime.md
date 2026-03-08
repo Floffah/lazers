@@ -23,6 +23,7 @@ The current text runtime keeps the model intentionally small, but it now sits on
 - process-owned stdio bound through a process-owned handle table
 - one kernel terminal thread that handles keyboard polling and terminal flushing
 - one user thread that reads and writes through `stdin`/`stdout` syscalls
+- one synchronous child-process spawn-and-wait path for future shell-launched programs
 - one cooperative scheduler with a separate idle thread
 
 This is still a bring-up step, not the final shell/session model. The important constraint is that text-program logic now runs as a real disk-backed user process on top of stdio-backed handles, and early user programs share one `liblazer` runtime crate for startup, panic-to-exit behavior, syscall wrappers, and minimal stdio helpers. A future userland shell should build on that same runtime surface rather than redefining its own bootstrap glue.

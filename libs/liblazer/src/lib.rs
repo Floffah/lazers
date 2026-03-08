@@ -16,6 +16,7 @@ const SYS_READ: usize = 0;
 const SYS_WRITE: usize = 1;
 const SYS_YIELD: usize = 2;
 const SYS_EXIT: usize = 3;
+const SYS_SPAWN_WAIT: usize = 4;
 
 global_asm!(include_str!("lib.asm"));
 
@@ -42,6 +43,11 @@ macro_rules! entry {
             main()
         }
     };
+}
+
+/// First-step userspace spawn failures.
+pub enum SpawnError {
+    Rejected,
 }
 
 /// Reads bytes from a process-owned descriptor into the provided buffer.
@@ -85,6 +91,16 @@ pub fn exit(code: usize) -> ! {
     loop {
         core::hint::spin_loop();
     }
+}
+
+/// Runs a child process from an absolute path and blocks until it exits.
+pub fn spawn_wait(path: &str) -> Result<usize, SpawnError> {
+    let status = unsafe { user_syscall3(SYS_SPAWN_WAIT, path.as_ptr() as usize, path.len(), 0) };
+    if status == usize::MAX {
+        return Err(SpawnError::Rejected);
+    }
+
+    Ok(status)
 }
 
 /// Writes one formatted string to standard output.

@@ -5,13 +5,20 @@
 //! they do not duplicate these resources.
 
 use crate::io::{HandleId, KernelObject, StdioHandles, MAX_PROCESS_HANDLES};
-use crate::memory::AddressSpace;
+use crate::memory::{AddressSpace, OwnedPages};
+use crate::thread::ThreadId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Opaque scheduler-assigned identifier for a process slot.
 pub struct ProcessId(pub usize);
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Runtime lifecycle state for a process slot.
+pub enum ProcessState {
+    Running,
+    Exited(usize),
+}
+
 /// Process metadata and owned resources.
 pub struct Process {
     #[allow(dead_code)]
@@ -21,17 +28,28 @@ pub struct Process {
     address_space: AddressSpace,
     handles: [Option<KernelObject>; MAX_PROCESS_HANDLES],
     stdio: StdioHandles,
+    state: ProcessState,
+    waiting_thread: Option<ThreadId>,
+    owned_pages: OwnedPages,
 }
 
 impl Process {
     /// Creates an empty process container with no installed handles.
-    pub const fn new(id: ProcessId, name: &'static str, address_space: AddressSpace) -> Self {
+    pub const fn new(
+        id: ProcessId,
+        name: &'static str,
+        address_space: AddressSpace,
+        owned_pages: OwnedPages,
+    ) -> Self {
         Self {
             id,
             name,
             address_space,
             handles: [None; MAX_PROCESS_HANDLES],
             stdio: StdioHandles::empty(),
+            state: ProcessState::Running,
+            waiting_thread: None,
+            owned_pages,
         }
     }
 
@@ -59,6 +77,42 @@ impl Process {
     /// threads.
     pub const fn address_space(&self) -> AddressSpace {
         self.address_space
+    }
+
+    /// Marks the process as exited with the provided status code.
+    pub fn mark_exited(&mut self, status: usize) {
+        self.state = ProcessState::Exited(status);
+    }
+
+    /// Remembers which thread is synchronously waiting on this process.
+    pub fn set_waiting_thread(&mut self, thread_id: ThreadId) {
+        self.waiting_thread = Some(thread_id);
+    }
+
+    /// Removes and returns the thread waiting on this process, if one exists.
+    pub fn take_waiting_thread(&mut self) -> Option<ThreadId> {
+        let thread_id = self.waiting_thread;
+        self.waiting_thread = None;
+        thread_id
+    }
+
+    /// Duplicates this process' stdio bindings into another process-local handle table.
+    pub fn inherit_stdio_into(&self, child: &mut Process) -> Option<()> {
+        let stdin = child.install_handle(self.resolve_fd(0)?)?;
+        let stdout = child.install_handle(self.resolve_fd(1)?)?;
+        let stderr = child.install_handle(self.resolve_fd(2)?)?;
+        child.set_stdio(StdioHandles::new(stdin, stdout, stderr));
+        Some(())
+    }
+
+    /// Releases process-owned memory resources back to the kernel allocator.
+    pub fn release_resources(self) {
+        self.release_owned_pages().release();
+    }
+
+    /// Consumes the process and returns the memory pages it owns.
+    pub fn release_owned_pages(self) -> OwnedPages {
+        self.owned_pages
     }
 
     /// Reads bytes from one of the process' standard streams.

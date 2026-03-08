@@ -129,7 +129,7 @@ pub extern "C" fn rust_trap_entry(frame: &mut TrapFrame) {
                     frame.error_code,
                     read_cr2()
                 );
-                crate::scheduler::block_current_thread_and_schedule();
+                crate::scheduler::exit_current_process(1);
             } else {
                 panic!(
                     "kernel trap {} rip={:#x} err={:#x} cr2={:#x}",

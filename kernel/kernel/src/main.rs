@@ -65,20 +65,22 @@ pub extern "sysv64" fn kernel_main(boot_info: *const BootInfo) -> ! {
     let surface = terminal::TerminalSurface::new(endpoint);
     surface.begin_session();
 
-    let root_fs = storage::mount_root_fs()
+    storage::init_root_fs()
         .unwrap_or_else(|error| panic!("failed to mount root filesystem: {}", error.as_str()));
-    let user_program = load_user_program_from_disk(root_fs);
+    let user_program = load_user_program_from_disk("/bin/echo");
 
     scheduler::init();
     let kernel_process = scheduler::create_process(scheduler::ProcessConfig {
         name: "kernel-system",
         address_space: memory::kernel_address_space(),
         terminal_endpoint: None,
+        owned_pages: memory::OwnedPages::empty(),
     });
     let user_process = scheduler::create_process(scheduler::ProcessConfig {
         name: "user-echo",
         address_space: user_program.address_space,
         terminal_endpoint: Some(endpoint),
+        owned_pages: user_program.owned_pages,
     });
     let _terminal_thread = scheduler::create_kernel_thread("terminal", kernel_process, terminal_thread_entry);
     let _user_thread = scheduler::create_user_thread(
@@ -116,12 +118,13 @@ pub(crate) fn halt_forever() -> ! {
 /// The path is deliberately hard-coded at this stage so the kernel proves the
 /// full `root fs -> ELF loader -> user process` path without yet introducing
 /// session policy or shell selection.
-fn load_user_program_from_disk(root_fs: storage::RootFs) -> LoadedUserProgram {
-    let program_bytes = root_fs
-        .read_file("/bin/echo")
-        .unwrap_or_else(|error| panic!("failed to read /bin/echo: {}", error.as_str()));
-    memory::load_user_program(program_bytes)
-        .unwrap_or_else(|error| panic!("failed to load /bin/echo: {}", error.as_str()))
+fn load_user_program_from_disk(path: &str) -> LoadedUserProgram {
+    let program_bytes = storage::read_root_file(path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {}", path, error.as_str()));
+    let program = memory::load_user_program(program_bytes.as_slice())
+        .unwrap_or_else(|error| panic!("failed to load {}: {}", path, error.as_str()));
+    program_bytes.release();
+    program
 }
 
 /// Runs the fullscreen terminal service loop for the primary terminal session.

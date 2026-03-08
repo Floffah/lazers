@@ -6,6 +6,7 @@
 //! root-filesystem interface used by the kernel bootstrap code.
 
 use core::mem::size_of;
+use core::cell::UnsafeCell;
 use core::ptr::{copy_nonoverlapping, read_volatile, write_volatile};
 
 use crate::memory::{self, MemoryError};
@@ -40,6 +41,8 @@ const FAT_ATTRIBUTE_LONG_NAME: u8 = 0x0f;
 const FAT_ENTRY_END_OF_CHAIN: u32 = 0x0fff_fff8;
 const FAT_ENTRY_BAD_CLUSTER: u32 = 0x0fff_fff7;
 
+static ROOT_FS: RootFsCell = RootFsCell::new();
+
 #[derive(Clone, Copy)]
 /// Mounted runtime root filesystem backed by the `LAZERS-SYSTEM` partition.
 pub struct RootFs {
@@ -49,11 +52,13 @@ pub struct RootFs {
 impl RootFs {
     /// Reads one absolute-path file from the mounted root filesystem into a
     /// kernel-owned buffer.
-    pub fn read_file(&self, path: &str) -> Result<&'static [u8], StorageError> {
+    pub fn read_file(&self, path: &str) -> Result<memory::KernelBuffer, StorageError> {
         let file = self.fs.open_absolute(path)?;
         let buffer = memory::allocate_kernel_buffer(file.size as usize).map_err(StorageError::Memory)?;
-        let bytes_read = self.fs.read_file(&file, buffer)?;
-        Ok(&buffer[..bytes_read])
+        let mut buffer = buffer;
+        let bytes_read = self.fs.read_file(&file, buffer.as_mut_slice())?;
+        debug_assert_eq!(bytes_read, buffer.len());
+        Ok(buffer)
     }
 }
 
@@ -76,6 +81,7 @@ pub enum StorageError {
     FileNotFound,
     NotAFile,
     BufferTooSmall,
+    RootFsUnavailable,
 }
 
 impl StorageError {
@@ -97,13 +103,27 @@ impl StorageError {
             Self::FileNotFound => "the requested file was not found",
             Self::NotAFile => "the requested path does not name a regular file",
             Self::BufferTooSmall => "the destination buffer is too small",
+            Self::RootFsUnavailable => "the runtime root filesystem is not mounted",
         }
     }
 }
 
 /// Discovers the first AHCI disk, reads GPT, and mounts the `LAZERS-SYSTEM`
 /// partition as the runtime root filesystem.
-pub fn mount_root_fs() -> Result<RootFs, StorageError> {
+pub fn init_root_fs() -> Result<(), StorageError> {
+    let root_fs = mount_root_fs()?;
+    with_root_fs_mut(|slot| {
+        *slot = Some(root_fs);
+    });
+    Ok(())
+}
+
+/// Reads one absolute-path file from the mounted runtime root filesystem.
+pub fn read_root_file(path: &str) -> Result<memory::KernelBuffer, StorageError> {
+    with_root_fs(|root_fs| root_fs.read_file(path))
+}
+
+fn mount_root_fs() -> Result<RootFs, StorageError> {
     let controller_info = pci::find_ahci_controller().ok_or(StorageError::AhciControllerNotFound)?;
     pci::enable_memory_bus_mastering(controller_info.location);
 
@@ -125,6 +145,39 @@ pub fn mount_root_fs() -> Result<RootFs, StorageError> {
     let fs = Fat32::mount(device, system)?;
     Ok(RootFs { fs })
 }
+
+fn with_root_fs<F, T>(operation: F) -> Result<T, StorageError>
+where
+    F: FnOnce(RootFs) -> Result<T, StorageError>,
+{
+    let root_fs = unsafe { *ROOT_FS.get() }.ok_or(StorageError::RootFsUnavailable)?;
+    operation(root_fs)
+}
+
+fn with_root_fs_mut<F, T>(operation: F) -> T
+where
+    F: FnOnce(&mut Option<RootFs>) -> T,
+{
+    unsafe { operation(ROOT_FS.get()) }
+}
+
+struct RootFsCell {
+    root_fs: UnsafeCell<Option<RootFs>>,
+}
+
+impl RootFsCell {
+    const fn new() -> Self {
+        Self {
+            root_fs: UnsafeCell::new(None),
+        }
+    }
+
+    unsafe fn get(&self) -> &mut Option<RootFs> {
+        &mut *self.root_fs.get()
+    }
+}
+
+unsafe impl Sync for RootFsCell {}
 
 #[derive(Clone, Copy)]
 struct BlockDevice {
