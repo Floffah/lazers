@@ -5,11 +5,11 @@
 //!
 //! `lash` is intentionally small: it owns prompt display, local line editing,
 //! command-name parsing, and synchronous child launch through `spawn_wait`.
-//! It does not yet implement built-ins, argv, cwd, or environment handling.
+//! It now owns its process cwd through `cd`, supports a minimal `exit` built-in,
+//! but still does not implement argv or environment handling.
 
-use liblazer::{self, print, println, SpawnError};
+use liblazer::{self, print, println, ChdirError, SpawnError};
 
-const PROMPT: &str = "/ > ";
 const LINE_CAPACITY: usize = 256;
 
 liblazer::entry!(main);
@@ -25,6 +25,8 @@ struct Shell {
     byte: [u8; 1],
     command_name: [u8; LINE_CAPACITY],
     command_path: [u8; LINE_CAPACITY + 5],
+    path_argument: [u8; LINE_CAPACITY],
+    cwd: [u8; LINE_CAPACITY],
 }
 
 impl Shell {
@@ -35,6 +37,8 @@ impl Shell {
             byte: [0; 1],
             command_name: [0; LINE_CAPACITY],
             command_path: [0; LINE_CAPACITY + 5],
+            path_argument: [0; LINE_CAPACITY],
+            cwd: [0; LINE_CAPACITY],
         }
     }
 
@@ -82,8 +86,15 @@ impl Shell {
     fn submit_line(&mut self) {
         println!();
 
-        if let Some(command_len) = self.copy_command_token() {
-            if let Some(path_len) = self.resolve_command_path(command_len) {
+        if let Some((command_start, command_end)) = self.next_token_bounds(0) {
+            let command_len = command_end - command_start;
+            self.command_name[..command_len].copy_from_slice(&self.line[command_start..command_end]);
+
+            if self.command_name[..command_len] == *b"cd" {
+                self.run_cd(command_end);
+            } else if self.command_name[..command_len] == *b"exit" {
+                liblazer::exit(0);
+            } else if let Some(path_len) = self.resolve_command_path(command_len) {
                 let path = core::str::from_utf8(&self.command_path[..path_len]).unwrap_or("");
                 self.run_command(path, command_len);
             } else {
@@ -96,8 +107,7 @@ impl Shell {
         self.print_prompt();
     }
 
-    fn copy_command_token(&mut self) -> Option<usize> {
-        let mut start = 0;
+    fn next_token_bounds(&self, mut start: usize) -> Option<(usize, usize)> {
         while start < self.len && self.line[start] == b' ' {
             start += 1;
         }
@@ -111,9 +121,7 @@ impl Shell {
             end += 1;
         }
 
-        let token_len = end - start;
-        self.command_name[..token_len].copy_from_slice(&self.line[start..end]);
-        Some(token_len)
+        Some((start, end))
     }
 
     fn resolve_command_path(&mut self, command_len: usize) -> Option<usize> {
@@ -126,6 +134,11 @@ impl Shell {
             return Some(command_len);
         }
 
+        if self.command_name[..command_len].contains(&b'/') {
+            self.command_path[..command_len].copy_from_slice(&self.command_name[..command_len]);
+            return Some(command_len);
+        }
+
         let required = 5 + command_len;
         if required > self.command_path.len() {
             return None;
@@ -134,6 +147,26 @@ impl Shell {
         self.command_path[..5].copy_from_slice(b"/bin/");
         self.command_path[5..required].copy_from_slice(&self.command_name[..command_len]);
         Some(required)
+    }
+
+    fn run_cd(&mut self, command_end: usize) {
+        let path = if let Some((start, end)) = self.next_token_bounds(command_end) {
+            let path_len = end - start;
+            self.path_argument[..path_len].copy_from_slice(&self.line[start..end]);
+            core::str::from_utf8(&self.path_argument[..path_len]).unwrap_or("/")
+        } else {
+            "/"
+        };
+
+        match liblazer::chdir(path) {
+            Ok(()) => {}
+            Err(ChdirError::InvalidPath | ChdirError::NotFound) => {
+                println!("lash: directory not found: {}", path);
+            }
+            Err(ChdirError::ResourceUnavailable) => {
+                println!("lash: unable to change directory: resource unavailable");
+            }
+        }
     }
 
     fn run_command(&self, path: &str, command_len: usize) {
@@ -164,7 +197,11 @@ impl Shell {
         println!("lash: command not found: {}", command);
     }
 
-    fn print_prompt(&self) {
-        print!("{}", PROMPT);
+    fn print_prompt(&mut self) {
+        let cwd = match liblazer::getcwd(&mut self.cwd) {
+            Ok(len) => core::str::from_utf8(&self.cwd[..len]).unwrap_or("/"),
+            Err(_) => "/",
+        };
+        print!("{} > ", cwd);
     }
 }

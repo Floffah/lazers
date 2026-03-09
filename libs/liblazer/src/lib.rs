@@ -18,6 +18,8 @@ const SYS_YIELD: usize = 2;
 const SYS_EXIT: usize = 3;
 const SYS_SPAWN_WAIT: usize = 4;
 const SYS_READ_DIR: usize = 5;
+const SYS_CHDIR: usize = 6;
+const SYS_GETCWD: usize = 7;
 const SPAWN_ERROR_INVALID_PATH: usize = usize::MAX;
 const SPAWN_ERROR_FILE_NOT_FOUND: usize = usize::MAX - 1;
 const SPAWN_ERROR_INVALID_EXECUTABLE: usize = usize::MAX - 2;
@@ -26,6 +28,11 @@ const READ_DIR_ERROR_INVALID_PATH: usize = usize::MAX;
 const READ_DIR_ERROR_NOT_FOUND: usize = usize::MAX - 1;
 const READ_DIR_ERROR_BUFFER_TOO_SMALL: usize = usize::MAX - 2;
 const READ_DIR_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 3;
+const CHDIR_ERROR_INVALID_PATH: usize = usize::MAX;
+const CHDIR_ERROR_NOT_FOUND: usize = usize::MAX - 1;
+const CHDIR_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 2;
+const GETCWD_ERROR_BUFFER_TOO_SMALL: usize = usize::MAX;
+const GETCWD_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 1;
 
 global_asm!(include_str!("lib.asm"));
 
@@ -67,6 +74,19 @@ pub enum SpawnError {
 pub enum ReadDirError {
     InvalidPath,
     NotFound,
+    BufferTooSmall,
+    ResourceUnavailable,
+}
+
+/// First-step userspace cwd update failures.
+pub enum ChdirError {
+    InvalidPath,
+    NotFound,
+    ResourceUnavailable,
+}
+
+/// First-step userspace cwd query failures.
+pub enum GetCwdError {
     BufferTooSmall,
     ResourceUnavailable,
 }
@@ -114,7 +134,7 @@ pub fn exit(code: usize) -> ! {
     }
 }
 
-/// Runs a child process from an absolute path and blocks until it exits.
+/// Runs a child process from an absolute or cwd-relative path and blocks until it exits.
 pub fn spawn_wait(path: &str) -> Result<usize, SpawnError> {
     let status = unsafe { user_syscall3(SYS_SPAWN_WAIT, path.as_ptr() as usize, path.len(), 0) };
     match status {
@@ -126,7 +146,7 @@ pub fn spawn_wait(path: &str) -> Result<usize, SpawnError> {
     }
 }
 
-/// Lists one absolute-path directory into the provided newline-delimited buffer.
+/// Lists one absolute or cwd-relative directory into the provided newline-delimited buffer.
 pub fn read_dir(path: &str, buffer: &mut [u8]) -> Result<usize, ReadDirError> {
     let status = unsafe {
         user_syscall4(
@@ -142,6 +162,28 @@ pub fn read_dir(path: &str, buffer: &mut [u8]) -> Result<usize, ReadDirError> {
         READ_DIR_ERROR_NOT_FOUND => Err(ReadDirError::NotFound),
         READ_DIR_ERROR_BUFFER_TOO_SMALL => Err(ReadDirError::BufferTooSmall),
         READ_DIR_ERROR_RESOURCE_UNAVAILABLE => Err(ReadDirError::ResourceUnavailable),
+        _ => Ok(status),
+    }
+}
+
+/// Changes the current process working directory.
+pub fn chdir(path: &str) -> Result<(), ChdirError> {
+    let status = unsafe { user_syscall3(SYS_CHDIR, path.as_ptr() as usize, path.len(), 0) };
+    match status {
+        0 => Ok(()),
+        CHDIR_ERROR_INVALID_PATH => Err(ChdirError::InvalidPath),
+        CHDIR_ERROR_NOT_FOUND => Err(ChdirError::NotFound),
+        CHDIR_ERROR_RESOURCE_UNAVAILABLE => Err(ChdirError::ResourceUnavailable),
+        _ => Err(ChdirError::ResourceUnavailable),
+    }
+}
+
+/// Copies the current process working directory into the provided buffer.
+pub fn getcwd(buffer: &mut [u8]) -> Result<usize, GetCwdError> {
+    let status = unsafe { user_syscall3(SYS_GETCWD, buffer.as_mut_ptr() as usize, buffer.len(), 0) };
+    match status {
+        GETCWD_ERROR_BUFFER_TOO_SMALL => Err(GetCwdError::BufferTooSmall),
+        GETCWD_ERROR_RESOURCE_UNAVAILABLE => Err(GetCwdError::ResourceUnavailable),
         _ => Ok(status),
     }
 }

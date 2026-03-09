@@ -53,7 +53,7 @@ pub extern "sysv64" fn kernel_main(boot_info: *const BootInfo) -> ! {
     arch::init();
     console::init(boot_info.framebuffer);
     console::clear();
-    kprintln!("Running kernel in suite v0.9");
+    kprintln!("Welcome to lazers !!");
     kprintln!(
         "Using screen of {}x{} {}",
         boot_info.framebuffer.width,

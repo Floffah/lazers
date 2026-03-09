@@ -40,6 +40,7 @@ const FAT_ATTRIBUTE_VOLUME_ID: u8 = 1 << 3;
 const FAT_ATTRIBUTE_LONG_NAME: u8 = 0x0f;
 const FAT_ENTRY_END_OF_CHAIN: u32 = 0x0fff_fff8;
 const FAT_ENTRY_BAD_CLUSTER: u32 = 0x0fff_fff7;
+const MAX_PATH_COMPONENTS: usize = 64;
 
 static ROOT_FS: RootFsCell = RootFsCell::new();
 
@@ -65,6 +66,11 @@ impl RootFs {
     pub fn read_dir(&self, path: &str, buffer: &mut [u8]) -> Result<usize, StorageError> {
         self.fs.read_dir(path, buffer)
     }
+
+    /// Validates that the given absolute path resolves to a directory.
+    pub fn ensure_dir(&self, path: &str) -> Result<(), StorageError> {
+        self.fs.ensure_dir(path)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -81,6 +87,7 @@ pub enum StorageError {
     MissingEspPartition,
     MissingSystemPartition,
     InvalidFat32BootSector,
+    InvalidPath,
     PathNotAbsolute,
     InvalidShortName,
     FileNotFound,
@@ -104,6 +111,7 @@ impl StorageError {
             Self::MissingEspPartition => "the EFI system partition is missing",
             Self::MissingSystemPartition => "the LAZERS-SYSTEM partition is missing",
             Self::InvalidFat32BootSector => "the system partition does not contain a supported FAT32 filesystem",
+            Self::InvalidPath => "the requested path is invalid",
             Self::PathNotAbsolute => "the requested path is not absolute",
             Self::InvalidShortName => "the requested path component is not a supported FAT short name",
             Self::FileNotFound => "the requested file was not found",
@@ -133,6 +141,32 @@ pub fn read_root_file(path: &str) -> Result<memory::KernelBuffer, StorageError> 
 /// Lists one absolute-path directory from the mounted runtime root filesystem.
 pub fn read_root_dir(path: &str, buffer: &mut [u8]) -> Result<usize, StorageError> {
     with_root_fs(|root_fs| root_fs.read_dir(path, buffer))
+}
+
+/// Validates that one absolute-path directory exists on the mounted runtime root filesystem.
+pub fn ensure_root_dir(path: &str) -> Result<(), StorageError> {
+    with_root_fs(|root_fs| root_fs.ensure_dir(path))
+}
+
+/// Canonicalizes one runtime path against a process-owned cwd.
+pub fn normalize_path(cwd: &str, path: &str, buffer: &mut [u8]) -> Result<usize, StorageError> {
+    if path.is_empty() {
+        return Err(StorageError::InvalidPath);
+    }
+
+    let mut normalized_len = 1usize;
+    let mut component_count = 0usize;
+    let mut component_starts = [0usize; MAX_PATH_COMPONENTS];
+    buffer[0] = b'/';
+
+    if path.starts_with('/') {
+        normalize_path_parts(path, buffer, &mut normalized_len, &mut component_starts, &mut component_count)?;
+    } else {
+        normalize_path_parts(cwd, buffer, &mut normalized_len, &mut component_starts, &mut component_count)?;
+        normalize_path_parts(path, buffer, &mut normalized_len, &mut component_starts, &mut component_count)?;
+    }
+
+    Ok(normalized_len)
 }
 
 fn mount_root_fs() -> Result<RootFs, StorageError> {
@@ -615,6 +649,13 @@ impl Fat32 {
         }
     }
 
+    fn ensure_dir(&self, path: &str) -> Result<(), StorageError> {
+        match self.resolve_absolute(path)? {
+            FatResolvedPath::RootDirectory | FatResolvedPath::Directory(_) => Ok(()),
+            FatResolvedPath::File(_) => Err(StorageError::NotADirectory),
+        }
+    }
+
     fn read_file(&self, entry: &FatDirectoryEntry, buffer: &mut [u8]) -> Result<usize, StorageError> {
         if buffer.len() < entry.size as usize {
             return Err(StorageError::BufferTooSmall);
@@ -1056,4 +1097,52 @@ const fn align_up(value: u64, align: u64) -> u64 {
     } else {
         (value + align - 1) & !(align - 1)
     }
+}
+
+fn normalize_path_parts(
+    source: &str,
+    buffer: &mut [u8],
+    normalized_len: &mut usize,
+    component_starts: &mut [usize; MAX_PATH_COMPONENTS],
+    component_count: &mut usize,
+) -> Result<(), StorageError> {
+    for component in source.split('/') {
+        if component.is_empty() || component == "." {
+            continue;
+        }
+
+        if component == ".." {
+            if *component_count > 0 {
+                *component_count -= 1;
+                *normalized_len = component_starts[*component_count];
+            }
+            continue;
+        }
+
+        if *component_count >= component_starts.len() {
+            return Err(StorageError::InvalidPath);
+        }
+
+        let previous_len = *normalized_len;
+        let required = if previous_len == 1 {
+            component.len()
+        } else {
+            component.len() + 1
+        };
+        if previous_len + required > buffer.len() {
+            return Err(StorageError::InvalidPath);
+        }
+
+        if previous_len > 1 {
+            buffer[*normalized_len] = b'/';
+            *normalized_len += 1;
+        }
+
+        buffer[*normalized_len..*normalized_len + component.len()].copy_from_slice(component.as_bytes());
+        *normalized_len += component.len();
+        component_starts[*component_count] = previous_len;
+        *component_count += 1;
+    }
+
+    Ok(())
 }

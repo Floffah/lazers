@@ -3,8 +3,6 @@
 Lazers is a from-scratch operating system project so I can learn about OS design and implementation by building one myself. This is a learning & portfolio project.
 If this were ever to be finished it would stand as a practical, modular, modern OS that can run on real hardware, and is specifically for lazy developers (laz-ers) who want to write code not configure their environment.
 
-I used codex heavily to help with the learning curve (especially in the uefi and kernel process management stuff), but the core design and implementation decisions are my own. The project is a playground for me to explore how I think an OS should be structured and how it should work, and to learn about the low-level details of how those things are implemented.
-
 Thought I'd make it public in case anyone else finds it interesting or useful, but it's really just a personal learning project and not intended for anyone else's use. The code is MIT licensed, so if you want to copy anything, go for it.
 
 ## Principles

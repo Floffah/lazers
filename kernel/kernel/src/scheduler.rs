@@ -105,14 +105,33 @@ pub fn mark_idle_thread(thread_id: ThreadId) {
 }
 
 /// Loads a child executable from the runtime root filesystem, runs it with
-/// inherited stdio, and blocks until it exits.
+/// inherited stdio and cwd, and blocks until it exits.
 pub fn spawn_user_process_and_wait(path: &str) -> Result<usize, SpawnError> {
-    let file = match storage::read_root_file(path) {
+    let current = with_scheduler(|scheduler| scheduler.current_thread)
+        .ok_or(SpawnError::ResourceUnavailable)?;
+    let parent_process_id = with_scheduler(|scheduler| scheduler.thread(current).process_id());
+    let mut normalized_path = [0u8; crate::process::MAX_CWD_LEN];
+    let normalized_path_len = with_scheduler(|scheduler| {
+        storage::normalize_path(
+            scheduler.process(parent_process_id).cwd(),
+            path,
+            &mut normalized_path,
+        )
+    })
+    .map_err(map_storage_spawn_error)?;
+    let normalized_path =
+        core::str::from_utf8(&normalized_path[..normalized_path_len]).map_err(|_| SpawnError::InvalidPath)?;
+
+    let file = match storage::read_root_file(normalized_path) {
         Ok(file) => file,
         Err(storage::StorageError::FileNotFound | storage::StorageError::NotAFile) => {
             return Err(SpawnError::FileNotFound);
         }
-        Err(storage::StorageError::PathNotAbsolute | storage::StorageError::InvalidShortName) => {
+        Err(
+            storage::StorageError::InvalidPath
+            | storage::StorageError::PathNotAbsolute
+            | storage::StorageError::InvalidShortName,
+        ) => {
             return Err(SpawnError::InvalidPath);
         }
         Err(_) => {
@@ -128,8 +147,6 @@ pub fn spawn_user_process_and_wait(path: &str) -> Result<usize, SpawnError> {
     };
     file.release();
 
-    let current = with_scheduler(|scheduler| scheduler.current_thread)
-        .ok_or(SpawnError::ResourceUnavailable)?;
     let child_process = match with_scheduler_mut(|scheduler| scheduler.spawn_child_process(current, program)) {
         Ok(process_id) => process_id,
         Err(program) => {
@@ -229,6 +246,46 @@ pub fn current_process_read(fd: usize, buffer: &mut [u8]) -> usize {
 /// Writes to the current thread's process-owned standard streams.
 pub fn current_process_write(fd: usize, buffer: &[u8]) -> usize {
     with_current_process(|process| process.write(fd, buffer)).unwrap_or(0)
+}
+
+/// Copies the current process cwd into a caller-provided buffer.
+pub fn current_process_getcwd(buffer: &mut [u8]) -> Option<usize> {
+    with_current_process(|process| process.copy_cwd_into(buffer)).flatten()
+}
+
+/// Resolves and installs a new cwd for the current process.
+pub fn current_process_chdir(path: &str) -> Result<(), storage::StorageError> {
+    with_scheduler_mut(|scheduler| {
+        let current = scheduler.current_thread.ok_or(storage::StorageError::RootFsUnavailable)?;
+        let process_id = scheduler.thread(current).process_id();
+        let current_cwd = scheduler.process(process_id).cwd();
+
+        let mut normalized = [0u8; crate::process::MAX_CWD_LEN];
+        let normalized_len = storage::normalize_path(current_cwd, path, &mut normalized)?;
+        let normalized_path =
+            core::str::from_utf8(&normalized[..normalized_len]).map_err(|_| storage::StorageError::InvalidPath)?;
+
+        storage::ensure_root_dir(normalized_path)?;
+        scheduler
+            .process_mut(process_id)
+            .set_cwd(normalized_path)
+            .ok_or(storage::StorageError::InvalidPath)
+    })
+}
+
+/// Lists one runtime path directory from the current process' cwd context.
+pub fn current_process_read_dir(path: &str, buffer: &mut [u8]) -> Result<usize, storage::StorageError> {
+    with_scheduler(|scheduler| {
+        let current = scheduler.current_thread.ok_or(storage::StorageError::RootFsUnavailable)?;
+        let process_id = scheduler.thread(current).process_id();
+        let current_cwd = scheduler.process(process_id).cwd();
+
+        let mut normalized = [0u8; crate::process::MAX_CWD_LEN];
+        let normalized_len = storage::normalize_path(current_cwd, path, &mut normalized)?;
+        let normalized_path =
+            core::str::from_utf8(&normalized[..normalized_len]).map_err(|_| storage::StorageError::InvalidPath)?;
+        storage::read_root_dir(normalized_path, buffer)
+    })
 }
 
 /// Dispatches the current thread's configured start contract.
@@ -392,6 +449,15 @@ impl SchedulerState {
             .inherit_stdio_into(&mut child)
             .is_none()
         {
+            return Err(LoadedUserProgram {
+                address_space: child.address_space(),
+                entry_point,
+                user_stack_top,
+                owned_pages: child.release_owned_pages(),
+            });
+        }
+
+        if self.process(parent_process_id).inherit_cwd_into(&mut child).is_none() {
             return Err(LoadedUserProgram {
                 address_space: child.address_space(),
                 entry_point,
@@ -636,5 +702,15 @@ impl ThreadStack {
         Self {
             bytes: [0; THREAD_STACK_SIZE],
         }
+    }
+}
+
+fn map_storage_spawn_error(error: storage::StorageError) -> SpawnError {
+    match error {
+        storage::StorageError::InvalidPath
+        | storage::StorageError::PathNotAbsolute
+        | storage::StorageError::InvalidShortName => SpawnError::InvalidPath,
+        storage::StorageError::FileNotFound | storage::StorageError::NotAFile => SpawnError::FileNotFound,
+        _ => SpawnError::ResourceUnavailable,
     }
 }

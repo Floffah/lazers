@@ -1,9 +1,9 @@
 //! Minimal syscall dispatch for the bootstrap user-mode runtime.
 //!
 //! The ABI is intentionally tiny: stdio-backed `read`/`write`, cooperative
-//! `yield`, process launch, and a narrow directory listing call. This is enough
-//! to validate early user programs without prematurely designing a wider kernel
-//! API surface.
+//! `yield`, process launch, cwd management, and narrow filesystem calls. This
+//! is enough to validate early user programs without prematurely designing a
+//! wider kernel API surface.
 
 use crate::arch::TrapFrame;
 use crate::memory;
@@ -14,6 +14,8 @@ const SYS_YIELD: u64 = 2;
 const SYS_EXIT: u64 = 3;
 const SYS_SPAWN_WAIT: u64 = 4;
 const SYS_READ_DIR: u64 = 5;
+const SYS_CHDIR: u64 = 6;
+const SYS_GETCWD: u64 = 7;
 
 const SPAWN_ERROR_INVALID_PATH: usize = usize::MAX;
 const SPAWN_ERROR_FILE_NOT_FOUND: usize = usize::MAX - 1;
@@ -23,6 +25,11 @@ const READ_DIR_ERROR_INVALID_PATH: usize = usize::MAX;
 const READ_DIR_ERROR_NOT_FOUND: usize = usize::MAX - 1;
 const READ_DIR_ERROR_BUFFER_TOO_SMALL: usize = usize::MAX - 2;
 const READ_DIR_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 3;
+const CHDIR_ERROR_INVALID_PATH: usize = usize::MAX;
+const CHDIR_ERROR_NOT_FOUND: usize = usize::MAX - 1;
+const CHDIR_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 2;
+const GETCWD_ERROR_BUFFER_TOO_SMALL: usize = usize::MAX;
+const GETCWD_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 1;
 
 /// Dispatches a syscall trap frame in place.
 ///
@@ -49,6 +56,12 @@ pub fn dispatch(frame: &mut TrapFrame) {
         SYS_READ_DIR => {
             frame.rax =
                 syscall_read_dir(frame.rdi, frame.rsi as usize, frame.rdx, frame.rcx as usize) as u64;
+        }
+        SYS_CHDIR => {
+            frame.rax = syscall_chdir(frame.rdi, frame.rsi as usize) as u64;
+        }
+        SYS_GETCWD => {
+            frame.rax = syscall_getcwd(frame.rdi, frame.rsi as usize) as u64;
         }
         _ => {
             frame.rax = 0;
@@ -79,9 +92,6 @@ fn syscall_spawn_wait(path_address: u64, path_len: usize) -> usize {
     let Ok(path) = core::str::from_utf8(path_bytes) else {
         return SPAWN_ERROR_INVALID_PATH;
     };
-    if !path.starts_with('/') {
-        return SPAWN_ERROR_INVALID_PATH;
-    }
 
     match crate::scheduler::spawn_user_process_and_wait(path) {
         Ok(status) => status,
@@ -104,17 +114,18 @@ fn syscall_read_dir(
     let Ok(path) = core::str::from_utf8(path_bytes) else {
         return READ_DIR_ERROR_INVALID_PATH;
     };
-    if !path.starts_with('/') {
-        return READ_DIR_ERROR_INVALID_PATH;
-    }
 
     let Some(buffer) = memory::user_slice_mut(buffer_address, buffer_len) else {
         return READ_DIR_ERROR_RESOURCE_UNAVAILABLE;
     };
 
-    match crate::storage::read_root_dir(path, buffer) {
+    match crate::scheduler::current_process_read_dir(path, buffer) {
         Ok(bytes_written) => bytes_written,
-        Err(crate::storage::StorageError::PathNotAbsolute | crate::storage::StorageError::InvalidShortName) => {
+        Err(
+            crate::storage::StorageError::InvalidPath
+            | crate::storage::StorageError::PathNotAbsolute
+            | crate::storage::StorageError::InvalidShortName,
+        ) => {
             READ_DIR_ERROR_INVALID_PATH
         }
         Err(crate::storage::StorageError::FileNotFound | crate::storage::StorageError::NotADirectory) => {
@@ -122,5 +133,39 @@ fn syscall_read_dir(
         }
         Err(crate::storage::StorageError::BufferTooSmall) => READ_DIR_ERROR_BUFFER_TOO_SMALL,
         Err(_) => READ_DIR_ERROR_RESOURCE_UNAVAILABLE,
+    }
+}
+
+fn syscall_chdir(path_address: u64, path_len: usize) -> usize {
+    let Some(path_bytes) = memory::user_slice(path_address, path_len) else {
+        return CHDIR_ERROR_INVALID_PATH;
+    };
+    let Ok(path) = core::str::from_utf8(path_bytes) else {
+        return CHDIR_ERROR_INVALID_PATH;
+    };
+
+    match crate::scheduler::current_process_chdir(path) {
+        Ok(()) => 0,
+        Err(
+            crate::storage::StorageError::InvalidPath
+            | crate::storage::StorageError::PathNotAbsolute
+            | crate::storage::StorageError::InvalidShortName,
+        ) => CHDIR_ERROR_INVALID_PATH,
+        Err(crate::storage::StorageError::FileNotFound | crate::storage::StorageError::NotADirectory) => {
+            CHDIR_ERROR_NOT_FOUND
+        }
+        Err(_) => CHDIR_ERROR_RESOURCE_UNAVAILABLE,
+    }
+}
+
+fn syscall_getcwd(buffer_address: u64, buffer_len: usize) -> usize {
+    let Some(buffer) = memory::user_slice_mut(buffer_address, buffer_len) else {
+        return GETCWD_ERROR_RESOURCE_UNAVAILABLE;
+    };
+
+    match crate::scheduler::current_process_getcwd(buffer) {
+        Some(bytes_written) => bytes_written,
+        None if buffer_len == 0 => GETCWD_ERROR_BUFFER_TOO_SMALL,
+        None => GETCWD_ERROR_BUFFER_TOO_SMALL,
     }
 }

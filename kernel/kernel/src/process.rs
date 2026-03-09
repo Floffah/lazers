@@ -8,6 +8,8 @@ use crate::io::{HandleId, KernelObject, StdioHandles, MAX_PROCESS_HANDLES};
 use crate::memory::{AddressSpace, OwnedPages};
 use crate::thread::ThreadId;
 
+pub const MAX_CWD_LEN: usize = 256;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Opaque scheduler-assigned identifier for a process slot.
 pub struct ProcessId(pub usize);
@@ -30,6 +32,8 @@ pub struct Process {
     stdio: StdioHandles,
     state: ProcessState,
     waiting_thread: Option<ThreadId>,
+    cwd: [u8; MAX_CWD_LEN],
+    cwd_len: usize,
     owned_pages: OwnedPages,
 }
 
@@ -49,6 +53,8 @@ impl Process {
             stdio: StdioHandles::empty(),
             state: ProcessState::Running,
             waiting_thread: None,
+            cwd: new_root_cwd(),
+            cwd_len: 1,
             owned_pages,
         }
     }
@@ -103,6 +109,38 @@ impl Process {
         let stderr = child.install_handle(self.resolve_fd(2)?)?;
         child.set_stdio(StdioHandles::new(stdin, stdout, stderr));
         Some(())
+    }
+
+    /// Copies this process' current working directory into a child process.
+    pub fn inherit_cwd_into(&self, child: &mut Process) -> Option<()> {
+        child.set_cwd(self.cwd())?;
+        Some(())
+    }
+
+    /// Returns the process-owned current working directory as a normalized absolute path.
+    pub fn cwd(&self) -> &str {
+        core::str::from_utf8(&self.cwd[..self.cwd_len]).unwrap_or("/")
+    }
+
+    /// Replaces the process-owned current working directory with a normalized absolute path.
+    pub fn set_cwd(&mut self, cwd: &str) -> Option<()> {
+        if cwd.is_empty() || !cwd.starts_with('/') || cwd.len() > self.cwd.len() {
+            return None;
+        }
+
+        self.cwd[..cwd.len()].copy_from_slice(cwd.as_bytes());
+        self.cwd_len = cwd.len();
+        Some(())
+    }
+
+    /// Copies the current working directory into a caller-provided buffer.
+    pub fn copy_cwd_into(&self, buffer: &mut [u8]) -> Option<usize> {
+        if buffer.len() < self.cwd_len {
+            return None;
+        }
+
+        buffer[..self.cwd_len].copy_from_slice(&self.cwd[..self.cwd_len]);
+        Some(self.cwd_len)
     }
 
     /// Releases process-owned memory resources back to the kernel allocator.
@@ -165,4 +203,10 @@ impl Process {
 
         self.resolve_handle(handle)
     }
+}
+
+const fn new_root_cwd() -> [u8; MAX_CWD_LEN] {
+    let mut cwd = [0; MAX_CWD_LEN];
+    cwd[0] = b'/';
+    cwd
 }
