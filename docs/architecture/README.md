@@ -10,6 +10,7 @@ Current focus areas include:
 - repository and subsystem structure
 - modular subsystem boundaries
 - boot, disk, and executable-loading flow
+- runtime filesystem layout and namespace direction
 - low-friction configuration and service behavior
 - performance and simplicity on modest hardware
 - terminal/runtime boundaries that prepare for a future userland shell
