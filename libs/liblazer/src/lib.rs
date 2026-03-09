@@ -22,6 +22,7 @@ const SYS_SPAWN_WAIT: usize = 4;
 const SYS_READ_DIR: usize = 5;
 const SYS_CHDIR: usize = 6;
 const SYS_GETCWD: usize = 7;
+const SYS_READ_FILE: usize = 8;
 const MAX_SPAWN_ARG_DATA: usize = 512;
 const SPAWN_ERROR_INVALID_PATH: usize = usize::MAX;
 const SPAWN_ERROR_FILE_NOT_FOUND: usize = usize::MAX - 1;
@@ -36,6 +37,11 @@ const CHDIR_ERROR_NOT_FOUND: usize = usize::MAX - 1;
 const CHDIR_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 2;
 const GETCWD_ERROR_BUFFER_TOO_SMALL: usize = usize::MAX;
 const GETCWD_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 1;
+const READ_FILE_ERROR_INVALID_PATH: usize = usize::MAX;
+const READ_FILE_ERROR_NOT_FOUND: usize = usize::MAX - 1;
+const READ_FILE_ERROR_NOT_A_FILE: usize = usize::MAX - 2;
+const READ_FILE_ERROR_BUFFER_TOO_SMALL: usize = usize::MAX - 3;
+const READ_FILE_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 4;
 
 global_asm!(include_str!("lib.asm"));
 
@@ -90,6 +96,15 @@ pub enum ChdirError {
 
 /// First-step userspace cwd query failures.
 pub enum GetCwdError {
+    BufferTooSmall,
+    ResourceUnavailable,
+}
+
+/// First-step userspace file-reading failures.
+pub enum ReadFileError {
+    InvalidPath,
+    NotFound,
+    NotAFile,
     BufferTooSmall,
     ResourceUnavailable,
 }
@@ -221,6 +236,27 @@ pub fn getcwd(buffer: &mut [u8]) -> Result<usize, GetCwdError> {
     match status {
         GETCWD_ERROR_BUFFER_TOO_SMALL => Err(GetCwdError::BufferTooSmall),
         GETCWD_ERROR_RESOURCE_UNAVAILABLE => Err(GetCwdError::ResourceUnavailable),
+        _ => Ok(status),
+    }
+}
+
+/// Reads one file into the provided buffer using an absolute or cwd-relative path.
+pub fn read_file(path: &str, buffer: &mut [u8]) -> Result<usize, ReadFileError> {
+    let status = unsafe {
+        user_syscall4(
+            SYS_READ_FILE,
+            path.as_ptr() as usize,
+            path.len(),
+            buffer.as_mut_ptr() as usize,
+            buffer.len(),
+        )
+    };
+    match status {
+        READ_FILE_ERROR_INVALID_PATH => Err(ReadFileError::InvalidPath),
+        READ_FILE_ERROR_NOT_FOUND => Err(ReadFileError::NotFound),
+        READ_FILE_ERROR_NOT_A_FILE => Err(ReadFileError::NotAFile),
+        READ_FILE_ERROR_BUFFER_TOO_SMALL => Err(ReadFileError::BufferTooSmall),
+        READ_FILE_ERROR_RESOURCE_UNAVAILABLE => Err(ReadFileError::ResourceUnavailable),
         _ => Ok(status),
     }
 }

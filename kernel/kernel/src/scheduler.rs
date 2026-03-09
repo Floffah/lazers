@@ -277,6 +277,21 @@ pub fn current_process_chdir(path: &str) -> Result<(), storage::StorageError> {
     })
 }
 
+/// Reads one runtime path file from the current process' cwd context.
+pub fn current_process_read_file(path: &str, buffer: &mut [u8]) -> Result<usize, storage::StorageError> {
+    with_scheduler(|scheduler| {
+        let current = scheduler.current_thread.ok_or(storage::StorageError::RootFsUnavailable)?;
+        let process_id = scheduler.thread(current).process_id();
+        let current_cwd = scheduler.process(process_id).cwd();
+
+        let mut normalized = [0u8; crate::process::MAX_CWD_LEN];
+        let normalized_len = storage::normalize_path(current_cwd, path, &mut normalized)?;
+        let normalized_path =
+            core::str::from_utf8(&normalized[..normalized_len]).map_err(|_| storage::StorageError::InvalidPath)?;
+        storage::read_root_file_into(normalized_path, buffer)
+    })
+}
+
 /// Lists one runtime path directory from the current process' cwd context.
 pub fn current_process_read_dir(path: &str, buffer: &mut [u8]) -> Result<usize, storage::StorageError> {
     with_scheduler(|scheduler| {

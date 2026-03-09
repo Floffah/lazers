@@ -16,6 +16,7 @@ const SYS_SPAWN_WAIT: u64 = 4;
 const SYS_READ_DIR: u64 = 5;
 const SYS_CHDIR: u64 = 6;
 const SYS_GETCWD: u64 = 7;
+const SYS_READ_FILE: u64 = 8;
 
 const SPAWN_ERROR_INVALID_PATH: usize = usize::MAX;
 const SPAWN_ERROR_FILE_NOT_FOUND: usize = usize::MAX - 1;
@@ -30,6 +31,11 @@ const CHDIR_ERROR_NOT_FOUND: usize = usize::MAX - 1;
 const CHDIR_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 2;
 const GETCWD_ERROR_BUFFER_TOO_SMALL: usize = usize::MAX;
 const GETCWD_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 1;
+const READ_FILE_ERROR_INVALID_PATH: usize = usize::MAX;
+const READ_FILE_ERROR_NOT_FOUND: usize = usize::MAX - 1;
+const READ_FILE_ERROR_NOT_A_FILE: usize = usize::MAX - 2;
+const READ_FILE_ERROR_BUFFER_TOO_SMALL: usize = usize::MAX - 3;
+const READ_FILE_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 4;
 
 /// Dispatches a syscall trap frame in place.
 ///
@@ -62,6 +68,10 @@ pub fn dispatch(frame: &mut TrapFrame) {
         }
         SYS_GETCWD => {
             frame.rax = syscall_getcwd(frame.rdi, frame.rsi as usize) as u64;
+        }
+        SYS_READ_FILE => {
+            frame.rax =
+                syscall_read_file(frame.rdi, frame.rsi as usize, frame.rdx, frame.rcx as usize) as u64;
         }
         _ => {
             frame.rax = 0;
@@ -170,5 +180,36 @@ fn syscall_getcwd(buffer_address: u64, buffer_len: usize) -> usize {
         Some(bytes_written) => bytes_written,
         None if buffer_len == 0 => GETCWD_ERROR_BUFFER_TOO_SMALL,
         None => GETCWD_ERROR_BUFFER_TOO_SMALL,
+    }
+}
+
+fn syscall_read_file(
+    path_address: u64,
+    path_len: usize,
+    buffer_address: u64,
+    buffer_len: usize,
+) -> usize {
+    let Some(path_bytes) = memory::user_slice(path_address, path_len) else {
+        return READ_FILE_ERROR_INVALID_PATH;
+    };
+    let Ok(path) = core::str::from_utf8(path_bytes) else {
+        return READ_FILE_ERROR_INVALID_PATH;
+    };
+
+    let Some(buffer) = memory::user_slice_mut(buffer_address, buffer_len) else {
+        return READ_FILE_ERROR_RESOURCE_UNAVAILABLE;
+    };
+
+    match crate::scheduler::current_process_read_file(path, buffer) {
+        Ok(bytes_written) => bytes_written,
+        Err(
+            crate::storage::StorageError::InvalidPath
+            | crate::storage::StorageError::PathNotAbsolute
+            | crate::storage::StorageError::InvalidShortName,
+        ) => READ_FILE_ERROR_INVALID_PATH,
+        Err(crate::storage::StorageError::FileNotFound) => READ_FILE_ERROR_NOT_FOUND,
+        Err(crate::storage::StorageError::NotAFile) => READ_FILE_ERROR_NOT_A_FILE,
+        Err(crate::storage::StorageError::BufferTooSmall) => READ_FILE_ERROR_BUFFER_TOO_SMALL,
+        Err(_) => READ_FILE_ERROR_RESOURCE_UNAVAILABLE,
     }
 }

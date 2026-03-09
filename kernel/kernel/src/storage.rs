@@ -51,6 +51,13 @@ pub struct RootFs {
 }
 
 impl RootFs {
+    /// Reads one absolute-path file from the mounted root filesystem into the
+    /// provided caller-owned buffer.
+    pub fn read_file_into(&self, path: &str, buffer: &mut [u8]) -> Result<usize, StorageError> {
+        let file = self.fs.open_absolute(path)?;
+        self.fs.read_file(&file, buffer)
+    }
+
     /// Reads one absolute-path file from the mounted root filesystem into a
     /// kernel-owned buffer.
     pub fn read_file(&self, path: &str) -> Result<memory::KernelBuffer, StorageError> {
@@ -136,6 +143,12 @@ pub fn init_root_fs() -> Result<(), StorageError> {
 /// Reads one absolute-path file from the mounted runtime root filesystem.
 pub fn read_root_file(path: &str) -> Result<memory::KernelBuffer, StorageError> {
     with_root_fs(|root_fs| root_fs.read_file(path))
+}
+
+/// Reads one absolute-path file from the mounted runtime root filesystem into a
+/// caller-owned buffer.
+pub fn read_root_file_into(path: &str, buffer: &mut [u8]) -> Result<usize, StorageError> {
+    with_root_fs(|root_fs| root_fs.read_file_into(path, buffer))
 }
 
 /// Lists one absolute-path directory from the mounted runtime root filesystem.

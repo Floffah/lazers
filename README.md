@@ -14,6 +14,50 @@ Thought I'd make it public in case anyone else finds it interesting or useful, b
 - Avoiding UNIX/DOS heritage where possible, but not dogmatically. If a convention serves the system well, it can be adopted; if it doesn't, it can be reinvented.
 - Low coupling where possible and minimal shortcuts
 
+## Checkpoints
+
+This is the high-level roadmap for Lazers as it exists now. It tracks major capability checkpoints rather than every version bump.
+
+### Complete
+
+- [x] Monorepo workspace with separate boot, kernel, shared library, userland, tooling, and architecture areas
+- [x] Real `UEFI -> loader -> kernel` boot path on `x86_64`
+- [x] Shared `BootInfo` handoff from loader to kernel
+- [x] Kernel-owned framebuffer text output
+- [x] Keyboard input reaching the running system
+- [x] Terminal-style text runtime with process `stdin`, `stdout`, and `stderr`
+- [x] Cooperative kernel scheduler with explicit `Process` and `Thread` models
+- [x] First real user-mode boundary with syscall handling
+- [x] Kernel-owned paging and per-process address spaces
+- [x] Shared `ELF` parsing/loading path for boot and runtime executable loading
+- [x] Raw GPT disk image with separate `LAZERS-ESP` and `LAZERS-SYSTEM` partitions
+- [x] AHCI/SATA disk access in the kernel
+- [x] Runtime root filesystem mounted from the system partition
+- [x] Disk-backed user executable loading from `/bin/...`
+- [x] `liblazer` bootstrap runtime for early userland programs
+- [x] User-initiated child process spawn and synchronous wait
+- [x] First shell as a normal userland program: `lash`
+- [x] First external user commands: `echo` and `ls`
+- [x] Process-owned current working directory with inherited cwd on spawn
+- [x] First shell built-ins that must affect the shell process itself: `cd` and `exit`
+- [x] Userland `argv` exposed through `liblazer::args()`
+- [x] Read-only file access from userland beyond directory listing and first file-content command: `cat`
+- [ ] Better shell command parsing beyond split-on-space tokenization
+- [ ] Richer command argument support across userland programs
+- [ ] More core commands such as `pwd`
+- [ ] Better shell/session policy for top-level `lash` exit and eventual halt/shutdown behavior
+- [ ] Filesystem write support
+- [ ] VFAT long-name support or a deliberate replacement strategy
+- [ ] A fuller userland process model beyond synchronous spawn-and-wait
+- [ ] Timer-driven preemption
+- [ ] SMP / multicore support
+- [ ] A more complete userland runtime beyond early `liblazer`
+- [ ] A real package of day-to-day user programs beyond the current bootstrap set
+- [ ] A real installer/update path for writing Lazers onto target hardware
+- [ ] Broader boot/runtime support outside the current `UEFI x86_64` path
+- [ ] Long-term filesystem direction beyond the current FAT32-first runtime setup
+- [ ] Far future higher-level graphics and windowing stack beyond the text terminal
+
 ## Build entry point
 
 Use `just` as the primary task runner for repository workflows.
