@@ -8,15 +8,12 @@ ESP_MOUNT_POINT="/Volumes/LAZERSESP"
 SYSTEM_MOUNT_POINT="/Volumes/LAZERSSYS"
 LOADER_PATH="$ROOT_DIR/target/x86_64-unknown-uefi/release/uefi-loader.efi"
 KERNEL_PATH="$ROOT_DIR/target/x86_64-unknown-none/release/kernel"
-USER_ECHO_PATH="$ROOT_DIR/build/echo"
-USER_CAT_PATH="$ROOT_DIR/build/cat"
-USER_LASH_PATH="$ROOT_DIR/build/lash"
-USER_LS_PATH="$ROOT_DIR/build/ls"
 IMAGE_SIZE="256m"
 ESP_VOLUME_NAME="LAZERSESP"
 SYSTEM_VOLUME_NAME="LAZERSSYS"
 ESP_SIZE="64m"
 SYSTEM_SIZE="R"
+USER_PACKAGES=()
 
 if [[ ! -f "$LOADER_PATH" ]]; then
   echo "missing loader binary at $LOADER_PATH" >&2
@@ -28,25 +25,22 @@ if [[ ! -f "$KERNEL_PATH" ]]; then
   exit 1
 fi
 
-if [[ ! -f "$USER_ECHO_PATH" ]]; then
-  echo "missing user binary at $USER_ECHO_PATH" >&2
+while IFS= read -r package; do
+  USER_PACKAGES+=("$package")
+done < <(find "$ROOT_DIR/user" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort)
+
+if [[ ${#USER_PACKAGES[@]} -eq 0 ]]; then
+  echo "no user packages found under $ROOT_DIR/user" >&2
   exit 1
 fi
 
-if [[ ! -f "$USER_CAT_PATH" ]]; then
-  echo "missing user binary at $USER_CAT_PATH" >&2
-  exit 1
-fi
-
-if [[ ! -f "$USER_LASH_PATH" ]]; then
-  echo "missing user binary at $USER_LASH_PATH" >&2
-  exit 1
-fi
-
-if [[ ! -f "$USER_LS_PATH" ]]; then
-  echo "missing user binary at $USER_LS_PATH" >&2
-  exit 1
-fi
+for package in "${USER_PACKAGES[@]}"; do
+  user_binary_path="$ROOT_DIR/build/$package"
+  if [[ ! -f "$user_binary_path" ]]; then
+    echo "missing user binary at $user_binary_path" >&2
+    exit 1
+  fi
+done
 
 mkdir -p "$BUILD_DIR"
 rm -f "$IMAGE_PATH"
@@ -99,10 +93,9 @@ cp "$LOADER_PATH" "$ESP_MOUNT_POINT/EFI/BOOT/BOOTX64.EFI"
 cp "$KERNEL_PATH" "$ESP_MOUNT_POINT/lazers/kernel.elf"
 
 mkdir -p "$SYSTEM_MOUNT_POINT/BIN"
-cp "$USER_CAT_PATH" "$SYSTEM_MOUNT_POINT/BIN/CAT"
-cp "$USER_ECHO_PATH" "$SYSTEM_MOUNT_POINT/BIN/ECHO"
-cp "$USER_LASH_PATH" "$SYSTEM_MOUNT_POINT/BIN/LASH"
-cp "$USER_LS_PATH" "$SYSTEM_MOUNT_POINT/BIN/LS"
+for package in "${USER_PACKAGES[@]}"; do
+  cp "$ROOT_DIR/build/$package" "$SYSTEM_MOUNT_POINT/BIN/${package^^}"
+done
 sync
 diskutil unmount "$ESP_PARTITION" >/dev/null
 diskutil unmount "$SYSTEM_PARTITION" >/dev/null
