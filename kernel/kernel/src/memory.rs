@@ -20,6 +20,7 @@ const MAX_SEGMENT_PAGES: usize = 128;
 const MAX_FREE_RANGES: usize = 128;
 const MAX_OWNED_PAGES: usize = MAX_SEGMENT_PAGES + USER_STACK_PAGES + 32;
 const MAX_SHARED_KERNEL_MAPPINGS: usize = 16;
+const MAX_STARTUP_ARGS: usize = 32;
 const PAGE_PRESENT: u64 = 1 << 0;
 const PAGE_WRITABLE: u64 = 1 << 1;
 const PAGE_USER: u64 = 1 << 2;
@@ -51,6 +52,12 @@ pub struct LoadedUserProgram {
     pub entry_point: u64,
     pub user_stack_top: u64,
     pub owned_pages: OwnedPages,
+}
+
+/// Startup data that should be made visible to a new user process.
+pub struct ProgramStartup<'a> {
+    pub argv0: &'a str,
+    pub argv_tail: &'a [u8],
 }
 
 /// Reclaimable contiguous kernel buffer backed by physical pages.
@@ -125,6 +132,8 @@ pub enum MemoryError {
     SharedKernelMappingCapacityExceeded,
     Elf(ElfError),
     UserImageOutOfRange,
+    InvalidStartupArguments,
+    StartupArgumentsTooLarge,
     SegmentOverlapCapacityExceeded,
     OwnedPageCapacityExceeded,
 }
@@ -140,6 +149,8 @@ impl MemoryError {
             Self::SharedKernelMappingCapacityExceeded => "shared kernel mapping capacity is exhausted",
             Self::Elf(error) => elf_error_as_str(error),
             Self::UserImageOutOfRange => "user image falls outside the fixed user layout",
+            Self::InvalidStartupArguments => "user startup arguments are invalid",
+            Self::StartupArgumentsTooLarge => "user startup arguments do not fit in the fixed stack",
             Self::SegmentOverlapCapacityExceeded => "user image mapping capacity is exhausted",
             Self::OwnedPageCapacityExceeded => "user image ownership tracking capacity is exhausted",
         }
@@ -241,7 +252,7 @@ pub fn map_kernel_identity_range(start: u64, end: u64, writable: bool) -> Result
 /// The loader reuses the shared ELF parser but owns the paging policy: loadable
 /// segments must fit inside the fixed user image range, and a fixed user stack
 /// is appended above them.
-pub fn load_user_program(bytes: &[u8]) -> Result<LoadedUserProgram, MemoryError> {
+pub fn load_user_program(bytes: &[u8], startup: &ProgramStartup<'_>) -> Result<LoadedUserProgram, MemoryError> {
     let elf = ElfImage::parse(bytes).map_err(MemoryError::Elf)?;
     let entry_point = elf.entry_point();
     if !contains_user_address(entry_point) {
@@ -327,14 +338,17 @@ pub fn load_user_program(bytes: &[u8]) -> Result<LoadedUserProgram, MemoryError>
             while stack_page < USER_STACK_TOP {
                 let phys = state.allocate_page()?;
                 builder.map_4k(stack_page, phys, PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER)?;
+                pages.insert(stack_page, phys)?;
                 owned_pages.push(phys)?;
                 stack_page += PAGE_SIZE as u64;
             }
 
+            let user_stack_top = write_startup_arguments(&pages, startup)?;
+
             Ok(LoadedUserProgram {
                 address_space: AddressSpace::new(root_paddr),
                 entry_point,
-                user_stack_top: USER_STACK_TOP,
+                user_stack_top,
                 owned_pages: core::mem::replace(&mut owned_pages, OwnedPages::empty()),
             })
         })();
@@ -382,6 +396,90 @@ pub fn user_slice_mut<'a>(address: u64, len: usize) -> Option<&'a mut [u8]> {
 
 fn contains_user_address(address: u64) -> bool {
     address >= USER_IMAGE_BASE && address < USER_STACK_TOP
+}
+
+fn write_startup_arguments(
+    pages: &UserPageMap,
+    startup: &ProgramStartup<'_>,
+) -> Result<u64, MemoryError> {
+    let mut args: [&[u8]; MAX_STARTUP_ARGS] = [&[]; MAX_STARTUP_ARGS];
+    args[0] = startup.argv0.as_bytes();
+    if core::str::from_utf8(args[0]).is_err() || args[0].contains(&0) {
+        return Err(MemoryError::InvalidStartupArguments);
+    }
+
+    let mut argc = 1usize;
+    let mut cursor = 0usize;
+    while cursor < startup.argv_tail.len() {
+        let Some(relative_end) = startup.argv_tail[cursor..].iter().position(|byte| *byte == 0) else {
+            return Err(MemoryError::InvalidStartupArguments);
+        };
+        let end = cursor + relative_end;
+        let arg = &startup.argv_tail[cursor..end];
+        if arg.is_empty() || core::str::from_utf8(arg).is_err() || arg.contains(&0) {
+            return Err(MemoryError::InvalidStartupArguments);
+        }
+        if argc >= args.len() {
+            return Err(MemoryError::StartupArgumentsTooLarge);
+        }
+        args[argc] = arg;
+        argc += 1;
+        cursor = end + 1;
+    }
+
+    let mut strings_size = 0usize;
+    let mut index = 0usize;
+    while index < argc {
+        strings_size += args[index].len() + 1;
+        index += 1;
+    }
+
+    let pointers_len = (argc + 1) * core::mem::size_of::<u64>();
+    let strings_start = USER_STACK_TOP
+        .checked_sub(strings_size as u64)
+        .ok_or(MemoryError::StartupArgumentsTooLarge)?;
+    let pointers_start = align_down(
+        strings_start
+            .checked_sub(pointers_len as u64)
+            .ok_or(MemoryError::StartupArgumentsTooLarge)?,
+        core::mem::align_of::<u64>() as u64,
+    );
+    let stack_start = align_down(
+        pointers_start
+            .checked_sub(core::mem::size_of::<u64>() as u64)
+            .ok_or(MemoryError::StartupArgumentsTooLarge)?,
+        16,
+    );
+    let user_stack_base = USER_STACK_TOP - ((USER_STACK_PAGES as u64) * (PAGE_SIZE as u64));
+    if stack_start < user_stack_base {
+        return Err(MemoryError::StartupArgumentsTooLarge);
+    }
+
+    let mut argv_pointers = [0u64; MAX_STARTUP_ARGS + 1];
+    let mut string_cursor = strings_start;
+    let null_byte = [0u8; 1];
+    let mut arg_index = 0usize;
+    while arg_index < argc {
+        argv_pointers[arg_index] = string_cursor;
+        pages.copy_into(string_cursor, args[arg_index])?;
+        string_cursor += args[arg_index].len() as u64;
+        pages.copy_into(string_cursor, &null_byte)?;
+        string_cursor += 1;
+        arg_index += 1;
+    }
+    argv_pointers[argc] = 0;
+
+    let argc_bytes = (argc as u64).to_ne_bytes();
+    pages.copy_into(stack_start, &argc_bytes)?;
+    let argv_pointer_bytes = unsafe {
+        slice::from_raw_parts(
+            argv_pointers.as_ptr() as *const u8,
+            (argc + 1) * core::mem::size_of::<u64>(),
+        )
+    };
+    pages.copy_into(stack_start + core::mem::size_of::<u64>() as u64, argv_pointer_bytes)?;
+
+    Ok(stack_start)
 }
 
 fn with_state<F, T>(operation: F) -> T

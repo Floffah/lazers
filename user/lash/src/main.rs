@@ -11,6 +11,7 @@
 use liblazer::{self, print, println, ChdirError, SpawnError};
 
 const LINE_CAPACITY: usize = 256;
+const MAX_COMMAND_ARGS: usize = 16;
 
 liblazer::entry!(main);
 
@@ -96,7 +97,7 @@ impl Shell {
                 liblazer::exit(0);
             } else if let Some(path_len) = self.resolve_command_path(command_len) {
                 let path = core::str::from_utf8(&self.command_path[..path_len]).unwrap_or("");
-                self.run_command(path, command_len);
+                self.run_command(path, command_len, command_end);
             } else {
                 let command = core::str::from_utf8(&self.command_name[..command_len]).unwrap_or("");
                 self.command_not_found(command);
@@ -169,8 +170,22 @@ impl Shell {
         }
     }
 
-    fn run_command(&self, path: &str, command_len: usize) {
-        match liblazer::spawn_wait(path) {
+    fn run_command(&self, path: &str, command_len: usize, command_end: usize) {
+        let mut arguments = [""; MAX_COMMAND_ARGS];
+        let mut count = 0usize;
+        let mut next_start = command_end;
+        while let Some((start, end)) = self.next_token_bounds(next_start) {
+            if count >= arguments.len() {
+                println!("lash: unable to run command: resource unavailable");
+                println!();
+                return;
+            }
+            arguments[count] = core::str::from_utf8(&self.line[start..end]).unwrap_or("");
+            count += 1;
+            next_start = end;
+        }
+
+        match liblazer::spawn_wait(path, &arguments[..count]) {
             Ok(0) => {}
             Ok(status) => {
                 println!("lash: command exited with status {}", status);

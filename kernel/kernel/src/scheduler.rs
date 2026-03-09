@@ -106,7 +106,7 @@ pub fn mark_idle_thread(thread_id: ThreadId) {
 
 /// Loads a child executable from the runtime root filesystem, runs it with
 /// inherited stdio and cwd, and blocks until it exits.
-pub fn spawn_user_process_and_wait(path: &str) -> Result<usize, SpawnError> {
+pub fn spawn_user_process_and_wait(path: &str, argv_tail: &[u8]) -> Result<usize, SpawnError> {
     let current = with_scheduler(|scheduler| scheduler.current_thread)
         .ok_or(SpawnError::ResourceUnavailable)?;
     let parent_process_id = with_scheduler(|scheduler| scheduler.thread(current).process_id());
@@ -138,7 +138,11 @@ pub fn spawn_user_process_and_wait(path: &str) -> Result<usize, SpawnError> {
             return Err(SpawnError::ResourceUnavailable);
         }
     };
-    let program = match crate::memory::load_user_program(file.as_slice()) {
+    let startup = crate::memory::ProgramStartup {
+        argv0: normalized_path,
+        argv_tail,
+    };
+    let program = match crate::memory::load_user_program(file.as_slice(), &startup) {
         Ok(program) => program,
         Err(_) => {
             file.release();

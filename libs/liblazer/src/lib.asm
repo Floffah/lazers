@@ -1,6 +1,8 @@
 .section .text._start,"ax"
 .global _start
 _start:
+    mov rdi, rsp
+    call __liblazer_initialize
     call __liblazer_main
 1:
     jmp 1b

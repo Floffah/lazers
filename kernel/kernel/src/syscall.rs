@@ -51,7 +51,7 @@ pub fn dispatch(frame: &mut TrapFrame) {
             crate::scheduler::exit_current_process(frame.rdi as usize);
         }
         SYS_SPAWN_WAIT => {
-            frame.rax = syscall_spawn_wait(frame.rdi, frame.rsi as usize) as u64;
+            frame.rax = syscall_spawn_wait(frame.rdi, frame.rsi as usize, frame.rdx, frame.rcx as usize) as u64;
         }
         SYS_READ_DIR => {
             frame.rax =
@@ -85,15 +85,18 @@ fn syscall_write(fd: usize, buffer_address: u64, len: usize) -> usize {
     crate::scheduler::current_process_write(fd, buffer)
 }
 
-fn syscall_spawn_wait(path_address: u64, path_len: usize) -> usize {
+fn syscall_spawn_wait(path_address: u64, path_len: usize, argv_address: u64, argv_len: usize) -> usize {
     let Some(path_bytes) = memory::user_slice(path_address, path_len) else {
         return SPAWN_ERROR_INVALID_PATH;
     };
     let Ok(path) = core::str::from_utf8(path_bytes) else {
         return SPAWN_ERROR_INVALID_PATH;
     };
+    let Some(argv_tail) = memory::user_slice(argv_address, argv_len) else {
+        return SPAWN_ERROR_RESOURCE_UNAVAILABLE;
+    };
 
-    match crate::scheduler::spawn_user_process_and_wait(path) {
+    match crate::scheduler::spawn_user_process_and_wait(path, argv_tail) {
         Ok(status) => status,
         Err(crate::scheduler::SpawnError::InvalidPath) => SPAWN_ERROR_INVALID_PATH,
         Err(crate::scheduler::SpawnError::FileNotFound) => SPAWN_ERROR_FILE_NOT_FOUND,

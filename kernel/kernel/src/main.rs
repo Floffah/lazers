@@ -121,7 +121,11 @@ pub(crate) fn halt_forever() -> ! {
 fn load_user_program_from_disk(path: &str) -> LoadedUserProgram {
     let program_bytes = storage::read_root_file(path)
         .unwrap_or_else(|error| panic!("failed to read {}: {}", path, error.as_str()));
-    let program = memory::load_user_program(program_bytes.as_slice())
+    let startup = memory::ProgramStartup {
+        argv0: path,
+        argv_tail: &[],
+    };
+    let program = memory::load_user_program(program_bytes.as_slice(), &startup)
         .unwrap_or_else(|error| panic!("failed to load {}: {}", path, error.as_str()));
     program_bytes.release();
     program

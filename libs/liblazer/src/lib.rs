@@ -11,6 +11,8 @@ use core::arch::global_asm;
 use core::fmt;
 use core::fmt::Write;
 use core::panic::PanicInfo;
+use core::slice;
+use core::str;
 
 const SYS_READ: usize = 0;
 const SYS_WRITE: usize = 1;
@@ -20,6 +22,7 @@ const SYS_SPAWN_WAIT: usize = 4;
 const SYS_READ_DIR: usize = 5;
 const SYS_CHDIR: usize = 6;
 const SYS_GETCWD: usize = 7;
+const MAX_SPAWN_ARG_DATA: usize = 512;
 const SPAWN_ERROR_INVALID_PATH: usize = usize::MAX;
 const SPAWN_ERROR_FILE_NOT_FOUND: usize = usize::MAX - 1;
 const SPAWN_ERROR_INVALID_EXECUTABLE: usize = usize::MAX - 2;
@@ -91,6 +94,17 @@ pub enum GetCwdError {
     ResourceUnavailable,
 }
 
+#[derive(Clone, Copy)]
+struct StartupArgs {
+    argc: usize,
+    argv: *const usize,
+}
+
+static mut STARTUP_ARGS: StartupArgs = StartupArgs {
+    argc: 0,
+    argv: core::ptr::null(),
+};
+
 /// Reads bytes from a process-owned descriptor into the provided buffer.
 pub fn read(fd: usize, buffer: &mut [u8]) -> usize {
     unsafe { user_syscall3(SYS_READ, fd, buffer.as_mut_ptr() as usize, buffer.len()) }
@@ -134,9 +148,32 @@ pub fn exit(code: usize) -> ! {
     }
 }
 
+/// Returns the current process arguments.
+pub fn args() -> Args {
+    let startup = unsafe { STARTUP_ARGS };
+    Args {
+        index: 0,
+        argc: startup.argc,
+        argv: startup.argv,
+    }
+}
+
 /// Runs a child process from an absolute or cwd-relative path and blocks until it exits.
-pub fn spawn_wait(path: &str) -> Result<usize, SpawnError> {
-    let status = unsafe { user_syscall3(SYS_SPAWN_WAIT, path.as_ptr() as usize, path.len(), 0) };
+pub fn spawn_wait(path: &str, args: &[&str]) -> Result<usize, SpawnError> {
+    let mut payload = [0u8; MAX_SPAWN_ARG_DATA];
+    let payload_len = serialize_spawn_args(args, &mut payload).map_err(|error| match error {
+        SpawnSerializeError::InvalidUtf8 => SpawnError::InvalidPath,
+        SpawnSerializeError::TooLarge => SpawnError::ResourceUnavailable,
+    })?;
+    let status = unsafe {
+        user_syscall4(
+            SYS_SPAWN_WAIT,
+            path.as_ptr() as usize,
+            path.len(),
+            payload.as_ptr() as usize,
+            payload_len,
+        )
+    };
     match status {
         SPAWN_ERROR_INVALID_PATH => Err(SpawnError::InvalidPath),
         SPAWN_ERROR_FILE_NOT_FOUND => Err(SpawnError::FileNotFound),
@@ -185,6 +222,30 @@ pub fn getcwd(buffer: &mut [u8]) -> Result<usize, GetCwdError> {
         GETCWD_ERROR_BUFFER_TOO_SMALL => Err(GetCwdError::BufferTooSmall),
         GETCWD_ERROR_RESOURCE_UNAVAILABLE => Err(GetCwdError::ResourceUnavailable),
         _ => Ok(status),
+    }
+}
+
+/// Iterator over the current process arguments.
+pub struct Args {
+    index: usize,
+    argc: usize,
+    argv: *const usize,
+}
+
+impl Iterator for Args {
+    type Item = &'static str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= self.argc {
+            return None;
+        }
+
+        let pointer = unsafe { *self.argv.add(self.index) } as *const u8;
+        let length = c_string_len(pointer);
+        let bytes = unsafe { slice::from_raw_parts(pointer, length) };
+        let value = str::from_utf8(bytes).ok()?;
+        self.index += 1;
+        Some(value)
     }
 }
 
@@ -257,4 +318,47 @@ macro_rules! eprintln {
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
     exit(1)
+}
+
+#[unsafe(no_mangle)]
+extern "Rust" fn __liblazer_initialize(stack_top: usize) {
+    let argc = unsafe { *(stack_top as *const usize) };
+    let argv = unsafe { (stack_top as *const usize).add(1) };
+    unsafe {
+        STARTUP_ARGS = StartupArgs { argc, argv };
+    }
+}
+
+enum SpawnSerializeError {
+    InvalidUtf8,
+    TooLarge,
+}
+
+fn serialize_spawn_args(args: &[&str], buffer: &mut [u8]) -> Result<usize, SpawnSerializeError> {
+    let mut written = 0usize;
+    for arg in args {
+        if arg.as_bytes().contains(&0) {
+            return Err(SpawnSerializeError::InvalidUtf8);
+        }
+        let required = arg.len() + 1;
+        if written + required > buffer.len() {
+            return Err(SpawnSerializeError::TooLarge);
+        }
+        buffer[written..written + arg.len()].copy_from_slice(arg.as_bytes());
+        written += arg.len();
+        buffer[written] = 0;
+        written += 1;
+    }
+    Ok(written)
+}
+
+fn c_string_len(pointer: *const u8) -> usize {
+    let mut length = 0usize;
+    loop {
+        let byte = unsafe { *pointer.add(length) };
+        if byte == 0 {
+            return length;
+        }
+        length += 1;
+    }
 }
