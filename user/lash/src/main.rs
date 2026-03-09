@@ -19,7 +19,7 @@ liblazer::entry!(main);
 
 fn main() -> ! {
     let mut shell = Shell::new();
-    shell.run()
+    shell.start()
 }
 
 struct Shell {
@@ -45,7 +45,24 @@ impl Shell {
         }
     }
 
-    fn run(&mut self) -> ! {
+    fn start(&mut self) -> ! {
+        let mut args = liblazer::args();
+        let _ = args.next();
+        if let Some(option) = args.next() {
+            if option == "-c" {
+                let Some(command_line) = args.next() else {
+                    println!("lash: missing command string");
+                    liblazer::exit(1);
+                };
+                let status = self.execute_line(command_line.as_bytes(), ExecutionMode::Batch);
+                liblazer::exit(status);
+            }
+        }
+
+        self.run_interactive()
+    }
+
+    fn run_interactive(&mut self) -> ! {
         println!("Lash !!");
         self.print_prompt();
 
@@ -88,58 +105,135 @@ impl Shell {
 
     fn submit_line(&mut self) {
         println!();
+        let mut line = [0u8; LINE_CAPACITY];
+        line[..self.len].copy_from_slice(&self.line[..self.len]);
+        let _ = self.execute_line(&line[..self.len], ExecutionMode::Interactive);
+        self.len = 0;
+        self.print_prompt();
+    }
 
-        match self.parse_tokens() {
-            Ok(0) => {}
+    fn execute_line(&mut self, line: &[u8], mode: ExecutionMode) -> usize {
+        let mut segment_start = 0usize;
+        let mut index = 0usize;
+        let mut saw_separator = false;
+        let mut state = ParseState::Unquoted;
+
+        while index < line.len() {
+            let byte = line[index];
+            match state {
+                ParseState::Unquoted => match byte {
+                    b'\'' => state = ParseState::SingleQuoted,
+                    b'"' => state = ParseState::DoubleQuoted,
+                    b'\\' => {
+                        if index + 1 < line.len() {
+                            index += 2;
+                            continue;
+                        }
+                    }
+                    b'&' if index + 1 < line.len() && line[index + 1] == b'&' => {
+                        let segment = trim_spaces(&line[segment_start..index]);
+                        if segment.is_empty() {
+                            self.print_parse_error(mode);
+                            return 1;
+                        }
+
+                        saw_separator = true;
+                        let status = self.execute_segment(segment, mode);
+                        if status != 0 {
+                            return status;
+                        }
+
+                        index += 2;
+                        segment_start = index;
+                        continue;
+                    }
+                    _ => {}
+                },
+                ParseState::SingleQuoted => {
+                    if byte == b'\'' {
+                        state = ParseState::Unquoted;
+                    }
+                }
+                ParseState::DoubleQuoted => match byte {
+                    b'"' => state = ParseState::Unquoted,
+                    b'\\' => {
+                        if index + 1 < line.len() {
+                            index += 2;
+                            continue;
+                        }
+                    }
+                    _ => {}
+                },
+            }
+
+            index += 1;
+        }
+
+        let final_segment = trim_spaces(&line[segment_start..]);
+        if final_segment.is_empty() {
+            if saw_separator {
+                self.print_parse_error(mode);
+                return 1;
+            }
+            return 0;
+        }
+
+        self.execute_segment(final_segment, mode)
+    }
+
+    fn execute_segment(&mut self, line: &[u8], mode: ExecutionMode) -> usize {
+        match self.parse_tokens(line) {
+            Ok(0) => 0,
             Ok(count) => {
                 let command = self.token(0).unwrap_or("");
                 if command == "cd" {
-                    self.run_cd(count);
+                    self.run_cd(count)
                 } else if command == "exit" {
                     liblazer::exit(0);
                 } else if !command.is_empty() {
-                    self.run_command(command, count);
+                    self.run_command(command, count, mode)
                 } else {
                     self.command_not_found(command);
+                    1
                 }
             }
             Err(ParseError::UnmatchedSingleQuote)
             | Err(ParseError::UnmatchedDoubleQuote)
             | Err(ParseError::TrailingBackslash) => {
-                println!("lash: parse error");
+                self.print_parse_error(mode);
+                1
             }
             Err(ParseError::ResourceUnavailable) => {
                 println!("lash: unable to parse command: resource unavailable");
+                1
             }
         }
-
-        self.len = 0;
-        self.print_prompt();
     }
 
-    fn run_cd(&mut self, count: usize) {
+    fn run_cd(&mut self, count: usize) -> usize {
         let path = if count > 1 { self.token(1).unwrap_or("/") } else { "/" };
 
         match liblazer::chdir(path) {
-            Ok(()) => {}
+            Ok(()) => 0,
             Err(ChdirError::InvalidPath | ChdirError::NotFound) => {
                 println!("lash: directory not found: {}", path);
+                1
             }
             Err(ChdirError::ResourceUnavailable) => {
                 println!("lash: unable to change directory: resource unavailable");
+                1
             }
         }
     }
 
-    fn run_command(&self, command: &str, count: usize) {
+    fn run_command(&self, command: &str, count: usize, mode: ExecutionMode) -> usize {
         let mut arguments = [""; MAX_COMMAND_ARGS];
         let mut argument_count = 0usize;
         let mut index = 1usize;
         while index < count {
             if argument_count >= arguments.len() {
                 println!("lash: unable to parse command: resource unavailable");
-                println!();
-                return;
+                return 1;
             }
             arguments[argument_count] = self.token(index).unwrap_or("");
             argument_count += 1;
@@ -157,32 +251,38 @@ impl Shell {
         };
 
         match liblazer::spawn_wait(spawn_path, &arguments[..argument_count]) {
-            Ok(0) => {}
+            Ok(0) => 0,
             Ok(status) => {
-                println!("lash: command exited with status {}", status);
+                if matches!(mode, ExecutionMode::Interactive) {
+                    println!("lash: command exited with status {}", status);
+                    println!();
+                }
+                status
             }
             Err(SpawnError::FileNotFound) => {
                 self.command_not_found(command);
+                1
             }
             Err(SpawnError::InvalidPath) => {
                 println!("lash: invalid path: {}", spawn_path);
+                1
             }
             Err(SpawnError::InvalidExecutable) => {
                 println!("lash: invalid executable: {}", spawn_path);
+                1
             }
             Err(SpawnError::ResourceUnavailable) => {
                 println!("lash: unable to run command: resource unavailable");
+                1
             }
         }
-
-        println!();
     }
 
     fn command_not_found(&self, command: &str) {
         println!("lash: command not found: {}", command);
     }
 
-    fn parse_tokens(&mut self) -> Result<usize, ParseError> {
+    fn parse_tokens(&mut self, line: &[u8]) -> Result<usize, ParseError> {
         let mut state = ParseState::Unquoted;
         let mut source_index = 0usize;
         let mut token_count = 0usize;
@@ -190,8 +290,8 @@ impl Shell {
         let mut current_len = 0usize;
         let mut token_active = false;
 
-        while source_index < self.len {
-            let byte = self.line[source_index];
+        while source_index < line.len() {
+            let byte = line[source_index];
             match state {
                 ParseState::Unquoted => match byte {
                     b' ' => {
@@ -217,7 +317,7 @@ impl Shell {
                         state = ParseState::DoubleQuoted;
                     }
                     b'\\' => {
-                        if source_index + 1 >= self.len {
+                        if source_index + 1 >= line.len() {
                             return Err(ParseError::TrailingBackslash);
                         }
                         if !token_active {
@@ -225,7 +325,7 @@ impl Shell {
                             token_active = true;
                         }
                         source_index += 1;
-                        self.push_token_byte(storage_len, self.line[source_index])?;
+                        self.push_token_byte(storage_len, line[source_index])?;
                         storage_len += 1;
                         current_len += 1;
                     }
@@ -251,11 +351,11 @@ impl Shell {
                 ParseState::DoubleQuoted => match byte {
                     b'"' => state = ParseState::Unquoted,
                     b'\\' => {
-                        if source_index + 1 >= self.len {
+                        if source_index + 1 >= line.len() {
                             return Err(ParseError::TrailingBackslash);
                         }
                         source_index += 1;
-                        self.push_token_byte(storage_len, self.line[source_index])?;
+                        self.push_token_byte(storage_len, line[source_index])?;
                         storage_len += 1;
                         current_len += 1;
                     }
@@ -315,6 +415,13 @@ impl Shell {
         core::str::from_utf8(&self.token_storage[start..start + len]).ok()
     }
 
+    fn print_parse_error(&self, mode: ExecutionMode) {
+        println!("lash: parse error");
+        if matches!(mode, ExecutionMode::Interactive) {
+            println!();
+        }
+    }
+
     fn print_prompt(&mut self) {
         let cwd = match liblazer::getcwd(&mut self.cwd) {
             Ok(len) => core::str::from_utf8(&self.cwd[..len]).unwrap_or("/"),
@@ -337,4 +444,24 @@ enum ParseError {
     UnmatchedDoubleQuote,
     TrailingBackslash,
     ResourceUnavailable,
+}
+
+#[derive(Clone, Copy)]
+enum ExecutionMode {
+    Interactive,
+    Batch,
+}
+
+fn trim_spaces(bytes: &[u8]) -> &[u8] {
+    let mut start = 0usize;
+    let mut end = bytes.len();
+
+    while start < end && bytes[start] == b' ' {
+        start += 1;
+    }
+    while end > start && bytes[end - 1] == b' ' {
+        end -= 1;
+    }
+
+    &bytes[start..end]
 }
