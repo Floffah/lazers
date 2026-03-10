@@ -14,6 +14,7 @@ use liblazer::{self, print, println, ChdirError, SpawnError};
 const LINE_CAPACITY: usize = 256;
 const MAX_COMMAND_ARGS: usize = 16;
 const COMMAND_PATH_CAPACITY: usize = LINE_CAPACITY + 5;
+const MAX_CHAIN_SEGMENTS: usize = 32;
 
 liblazer::entry!(main);
 
@@ -113,9 +114,55 @@ impl Shell {
     }
 
     fn execute_line(&mut self, line: &[u8], mode: ExecutionMode) -> usize {
+        let segments = match self.scan_segments(line) {
+            Ok(segments) => segments,
+            Err(ParseError::UnmatchedSingleQuote)
+            | Err(ParseError::UnmatchedDoubleQuote)
+            | Err(ParseError::TrailingBackslash)
+            | Err(ParseError::InvalidSyntax) => {
+                self.print_parse_error(mode);
+                return 1;
+            }
+            Err(ParseError::ResourceUnavailable) => {
+                println!("lash: unable to parse command: resource unavailable");
+                return 1;
+            }
+        };
+
+        if segments.count == 0 {
+            return 0;
+        }
+
+        let mut last_status = 0usize;
+        let mut index = 0usize;
+        while index < segments.count {
+            let should_run = if index == 0 {
+                true
+            } else {
+                match segments.operators[index - 1] {
+                    SegmentOperator::And => last_status == 0,
+                    SegmentOperator::Or => last_status != 0,
+                    SegmentOperator::Sequence => true,
+                }
+            };
+
+            if should_run {
+                last_status = self.execute_segment(
+                    &line[segments.starts[index]..segments.ends[index]],
+                    mode,
+                );
+            }
+
+            index += 1;
+        }
+
+        last_status
+    }
+
+    fn scan_segments<'a>(&self, line: &'a [u8]) -> Result<SegmentScan, ParseError> {
+        let mut segments = SegmentScan::new();
         let mut segment_start = 0usize;
         let mut index = 0usize;
-        let mut saw_separator = false;
         let mut state = ParseState::Unquoted;
 
         while index < line.len() {
@@ -125,25 +172,39 @@ impl Shell {
                     b'\'' => state = ParseState::SingleQuoted,
                     b'"' => state = ParseState::DoubleQuoted,
                     b'\\' => {
-                        if index + 1 < line.len() {
-                            index += 2;
-                            continue;
+                        if index + 1 >= line.len() {
+                            return Err(ParseError::TrailingBackslash);
                         }
+                        index += 2;
+                        continue;
                     }
                     b'&' if index + 1 < line.len() && line[index + 1] == b'&' => {
-                        let segment = trim_spaces(&line[segment_start..index]);
-                        if segment.is_empty() {
-                            self.print_parse_error(mode);
-                            return 1;
+                        let (start, end) = trim_spaces_range(line, segment_start, index);
+                        if start == end {
+                            return Err(ParseError::InvalidSyntax);
                         }
-
-                        saw_separator = true;
-                        let status = self.execute_segment(segment, mode);
-                        if status != 0 {
-                            return status;
-                        }
-
+                        segments.push(start, end, Some(SegmentOperator::And))?;
                         index += 2;
+                        segment_start = index;
+                        continue;
+                    }
+                    b'|' if index + 1 < line.len() && line[index + 1] == b'|' => {
+                        let (start, end) = trim_spaces_range(line, segment_start, index);
+                        if start == end {
+                            return Err(ParseError::InvalidSyntax);
+                        }
+                        segments.push(start, end, Some(SegmentOperator::Or))?;
+                        index += 2;
+                        segment_start = index;
+                        continue;
+                    }
+                    b';' => {
+                        let (start, end) = trim_spaces_range(line, segment_start, index);
+                        if start == end {
+                            return Err(ParseError::InvalidSyntax);
+                        }
+                        segments.push(start, end, Some(SegmentOperator::Sequence))?;
+                        index += 1;
                         segment_start = index;
                         continue;
                     }
@@ -157,10 +218,11 @@ impl Shell {
                 ParseState::DoubleQuoted => match byte {
                     b'"' => state = ParseState::Unquoted,
                     b'\\' => {
-                        if index + 1 < line.len() {
-                            index += 2;
-                            continue;
+                        if index + 1 >= line.len() {
+                            return Err(ParseError::TrailingBackslash);
                         }
+                        index += 2;
+                        continue;
                     }
                     _ => {}
                 },
@@ -169,16 +231,22 @@ impl Shell {
             index += 1;
         }
 
-        let final_segment = trim_spaces(&line[segment_start..]);
-        if final_segment.is_empty() {
-            if saw_separator {
-                self.print_parse_error(mode);
-                return 1;
-            }
-            return 0;
+        match state {
+            ParseState::SingleQuoted => return Err(ParseError::UnmatchedSingleQuote),
+            ParseState::DoubleQuoted => return Err(ParseError::UnmatchedDoubleQuote),
+            ParseState::Unquoted => {}
         }
 
-        self.execute_segment(final_segment, mode)
+        let (start, end) = trim_spaces_range(line, segment_start, line.len());
+        if start == end {
+            if segments.count == 0 {
+                return Ok(segments);
+            }
+            return Err(ParseError::InvalidSyntax);
+        }
+
+        segments.push(start, end, None)?;
+        Ok(segments)
     }
 
     fn execute_segment(&mut self, line: &[u8], mode: ExecutionMode) -> usize {
@@ -199,7 +267,8 @@ impl Shell {
             }
             Err(ParseError::UnmatchedSingleQuote)
             | Err(ParseError::UnmatchedDoubleQuote)
-            | Err(ParseError::TrailingBackslash) => {
+            | Err(ParseError::TrailingBackslash)
+            | Err(ParseError::InvalidSyntax) => {
                 self.print_parse_error(mode);
                 1
             }
@@ -443,6 +512,7 @@ enum ParseError {
     UnmatchedSingleQuote,
     UnmatchedDoubleQuote,
     TrailingBackslash,
+    InvalidSyntax,
     ResourceUnavailable,
 }
 
@@ -452,16 +522,60 @@ enum ExecutionMode {
     Batch,
 }
 
-fn trim_spaces(bytes: &[u8]) -> &[u8] {
-    let mut start = 0usize;
-    let mut end = bytes.len();
+fn trim_spaces_range(bytes: &[u8], start: usize, end: usize) -> (usize, usize) {
+    let mut trimmed_start = start;
+    let mut trimmed_end = end;
 
-    while start < end && bytes[start] == b' ' {
-        start += 1;
+    while trimmed_start < trimmed_end && bytes[trimmed_start] == b' ' {
+        trimmed_start += 1;
     }
-    while end > start && bytes[end - 1] == b' ' {
-        end -= 1;
+    while trimmed_end > trimmed_start && bytes[trimmed_end - 1] == b' ' {
+        trimmed_end -= 1;
     }
 
-    &bytes[start..end]
+    (trimmed_start, trimmed_end)
+}
+
+#[derive(Clone, Copy)]
+enum SegmentOperator {
+    And,
+    Or,
+    Sequence,
+}
+
+struct SegmentScan {
+    starts: [usize; MAX_CHAIN_SEGMENTS],
+    ends: [usize; MAX_CHAIN_SEGMENTS],
+    operators: [SegmentOperator; MAX_CHAIN_SEGMENTS - 1],
+    count: usize,
+}
+
+impl SegmentScan {
+    const fn new() -> Self {
+        Self {
+            starts: [0; MAX_CHAIN_SEGMENTS],
+            ends: [0; MAX_CHAIN_SEGMENTS],
+            operators: [SegmentOperator::Sequence; MAX_CHAIN_SEGMENTS - 1],
+            count: 0,
+        }
+    }
+
+    fn push(&mut self, start: usize, end: usize, operator: Option<SegmentOperator>) -> Result<(), ParseError> {
+        if self.count >= self.starts.len() {
+            return Err(ParseError::ResourceUnavailable);
+        }
+
+        self.starts[self.count] = start;
+        self.ends[self.count] = end;
+
+        if let Some(operator) = operator {
+            if self.count >= self.operators.len() {
+                return Err(ParseError::ResourceUnavailable);
+            }
+            self.operators[self.count] = operator;
+        }
+
+        self.count += 1;
+        Ok(())
+    }
 }

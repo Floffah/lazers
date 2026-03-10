@@ -83,6 +83,7 @@ pub extern "sysv64" fn kernel_main(boot_info: *const BootInfo) -> ! {
         owned_pages: user_program.owned_pages,
     });
     let _terminal_thread = scheduler::create_kernel_thread("terminal", kernel_process, terminal_thread_entry);
+    kprintln!();
     let _user_thread = scheduler::create_user_thread(
         "user-lash-main",
         user_process,
