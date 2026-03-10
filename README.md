@@ -37,14 +37,14 @@ This is the high-level roadmap for Lazers as it exists now. It tracks major capa
 - [x] `liblazer` bootstrap runtime for early userland programs
 - [x] User-initiated child process spawn and synchronous wait
 - [x] First shell as a normal userland program: `lash`
-- [x] First external user commands: `echo` and `ls`
+- [x] First external user commands: `echo`, `ls`, and `pwd`
 - [x] Process-owned current working directory with inherited cwd on spawn
 - [x] First shell built-ins that must affect the shell process itself: `cd` and `exit`
 - [x] Userland `argv` exposed through `liblazer::args()`
 - [x] Read-only file access from userland beyond directory listing and first file-content command: `cat`
 - [ ] Better shell command parsing beyond split-on-space tokenization
 - [ ] Richer command argument support across userland programs
-- [ ] More core commands such as `pwd`
+- [ ] More core commands beyond the bootstrap set
 - [ ] Better shell/session policy for top-level `lash` exit and eventual halt/shutdown behavior
 - [ ] Filesystem write support
 - [ ] VFAT long-name support or a deliberate replacement strategy

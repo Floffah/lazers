@@ -10,6 +10,7 @@ members = [
     "user/echo",
     "user/lash",
     "user/ls",
+    "user/pwd",
 ]
 
 [workspace.package]
