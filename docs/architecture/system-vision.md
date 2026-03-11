@@ -1,22 +1,34 @@
 # System Vision
 
-## Goals
+Lazers is a from-scratch operating system project, but it is not trying to be unusual for its own sake. The goal is to build a system that feels deliberate, understandable, and practical.
 
-- Stay practical on modest hardware rather than assuming abundant CPU, memory, or GPU resources.
-- Keep the system modular so subsystems can be included, removed, or replaced without widespread breakage.
-- Provide sensible defaults so a full system can feel complete without constant manual configuration.
-- Build modern interfaces on purpose instead of inheriting Unix, DOS, or Windows behavior by default.
+## Main Goals
 
-## Engineering Implications
+Lazers is being shaped around four core goals:
 
-- Prefer simple execution models and predictable resource usage over abstraction layers that obscure cost.
-- Design subsystem APIs so optional features do not become hard dependencies accidentally.
-- Make the default path the well-supported path. Configuration should extend behavior, not rescue it.
-- Treat compatibility patterns from existing operating systems as options to evaluate, not templates to copy.
-- Document the rationale behind foundational architecture choices as they are made.
+- work well on modest hardware instead of assuming abundant CPU, memory, or GPU resources
+- stay modular so subsystems can be included, removed, or replaced cleanly
+- provide sensible defaults so the system feels usable without constant manual setup
+- build modern interfaces on purpose instead of inheriting legacy behavior by reflex
+
+These goals affect both code structure and product decisions.
+
+## Engineering Consequences
+
+In practice, those goals push the project toward a few consistent habits:
+
+- prefer simple execution models with visible costs
+- keep subsystem APIs explicit so optional features do not become hidden dependencies
+- treat the default path as the best-supported path
+- reuse older operating-system patterns only when they clearly fit this system
+- document major architecture decisions as part of the codebase, not as hidden assumptions
 
 ## Architectural Direction
 
-- A modular monolithic kernel provides a practical baseline while keeping internal boundaries explicit.
-- Userspace should absorb higher-level services whenever doing so improves modularity, replaceability, or system clarity.
-- Shared libraries should exist to support real reuse, not to hide weak ownership or avoid making an interface decision.
+The current direction follows naturally from those goals:
+
+- a modular monolithic kernel is the practical baseline
+- higher-level behavior should move into userspace when that makes the system clearer or more replaceable
+- shared libraries should exist only where they represent real shared runtime or format logic
+
+This is why Lazers has already grown a real userland shell, disk-backed executables, and a shared user runtime instead of keeping everything inside the kernel.

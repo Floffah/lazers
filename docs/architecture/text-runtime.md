@@ -1,49 +1,69 @@
 # Text Runtime
 
-## Direction
+The Lazers text runtime is built around one core rule: interactive programs should use standard streams, not direct access to the framebuffer or keyboard.
 
-Interactive text programs should speak through process-style standard streams rather than talking to the framebuffer or keyboard hardware directly.
+That keeps shell behavior in userland, keeps hardware handling in the kernel, and makes it possible for different kinds of text sessions to share the same runtime model later.
 
-The long-term model is:
+## The Model
+
+The intended shape is:
 
 - input drivers produce key events
-- a terminal surface owns visible text rendering for a session
+- a terminal surface owns the visible text session
 - a terminal endpoint carries byte-stream input and output for that session
-- programs attach through `stdin`, `stdout`, and `stderr`
-- the default shell `lash` runs as a normal user process on top of that terminal endpoint and can launch other programs as child processes
+- processes talk through `stdin`, `stdout`, and `stderr`
+- the shell is just another user process attached to that endpoint
 
-## Current Foundation
+This is the main architectural boundary that keeps Lazers from turning into “the kernel has a shell built into it.”
 
-The current text runtime keeps the model intentionally small, but it now sits on top of the first real kernel and user execution boundary:
+## How It Works Today
 
-- one fullscreen terminal surface
-- one terminal endpoint
-- one kernel system process that owns terminal-service work
-- one user shell process loaded from `/bin/lash` on the system partition
-- process-owned stdio bound through a process-owned handle table
-- one kernel terminal thread that handles keyboard polling and terminal flushing
-- one user thread that reads and writes through `stdin`/`stdout` syscalls
-- one synchronous child-process spawn-and-wait path for future shell-launched programs
-- one narrow read-only directory-listing syscall used by `/bin/ls`
-- one cooperative scheduler with a separate idle thread
+The current system is still small, but the boundary is already real:
 
-This is still a bring-up step, not the final shell/session model. The important constraint is that text-program logic now runs as a real disk-backed user process on top of stdio-backed handles, and early user programs share one `liblazer` runtime crate for startup, panic-to-exit behavior, syscall wrappers, and minimal stdio helpers. A future userland shell should build on that same runtime surface rather than redefining its own bootstrap glue.
+- one fullscreen terminal surface renders text to the framebuffer
+- one terminal endpoint carries byte-stream input and output
+- one kernel thread owns keyboard polling and screen flushing
+- one user shell process is loaded from disk and talks only through stdio
+- child processes inherit stdio and run synchronously through spawn-and-wait
 
-The first shell-facing filesystem command path is also now present: `lash` can launch `/bin/ls`, and `ls` uses a narrow read-only directory-listing syscall rather than any shell built-in behavior.
+The result is that commands like `lash`, `echo`, `ls`, `cat`, and `pwd` are all normal disk-backed user programs. They do not own the screen, and they do not receive hardware key events directly.
 
-## Current Userspace Model
+## Userland Runtime Surface
 
-- `liblazer` is the shared userland bootstrap crate for early programs.
-- User binaries still use `no_std` and `no_main`, with `liblazer` owning `_start`, syscall shims, panic-to-exit behavior, and basic stdio helpers.
-- `lash` is the first shell, but it is intentionally minimal:
-  - prompt and line editing live in userland
-  - command execution is synchronous
-  - bare command names resolve to `/bin/<name>`
-  - built-ins, argv, cwd, and PATH-like lookup are still out of scope
-- `echo` and `ls` are the current example utility programs that prove process launch and root-filesystem access from userland.
+Early user programs share one bootstrap runtime crate: `liblazer`.
 
-## Future Implications
+Today, `liblazer` provides:
 
-- Child processes should inherit stdio handles by default unless spawn-time overrides replace them.
-- A different default shell should be selectable by system configuration once userspace and session management exist.
-- SSH sessions, local HDMI text sessions, and future GUI terminal windows should all reuse the same endpoint and stdio model rather than inventing separate shell-facing interfaces.
+- process startup glue
+- syscall shims
+- panic-to-exit behavior
+- basic stdio helpers
+- `args()`
+- cwd helpers
+- simple file and directory access helpers
+
+User programs still run with `no_std` and `no_main`, but they already use a common runtime surface instead of each binary defining its own bootstrap path.
+
+## Shell Behavior Today
+
+`lash` is still intentionally small, but it already proves most of the text-runtime model:
+
+- prompt and line editing live in userland
+- built-ins like `cd` and `exit` affect the shell process itself
+- external commands are launched as child processes
+- cwd and argv are process-level runtime concepts, not shell-only hacks
+- shell syntax stays in `lash`; the kernel only executes explicit paths
+
+This is important for maintainability: the shell is policy, while the kernel provides mechanisms.
+
+## Why This Matters
+
+This model is the foundation for several future directions:
+
+- selecting a different default shell
+- non-interactive shell execution through `lash -c`
+- future SSH-backed text sessions
+- future GUI terminal windows
+- richer userspace programs that still rely on the same stdio model
+
+The details will evolve, but the main boundary should stay the same: hardware and session plumbing in the kernel, text-program behavior in userspace.

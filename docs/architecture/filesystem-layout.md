@@ -1,29 +1,32 @@
 # Filesystem Layout
 
-## Direction
+This page describes two related things:
 
-Lazers should have a filesystem layout that is easy to understand at a glance, avoids historical Unix baggage where it does not help, and still separates boot-critical files from the normal runtime filesystem cleanly.
+- how the Lazers disk is laid out today
+- what the long-term runtime filesystem should look like
 
-The runtime root filesystem should describe the machine as the user experiences it, not the firmware boot path. Boot artifacts, firmware fallbacks, and other implementation details should stay out of the normal runtime namespace unless explicitly exposed later for privileged maintenance work.
+The important rule is that the runtime filesystem should reflect how the machine is used, not how the firmware happens to boot it.
 
-## Current State
+## Disk Layout Today
 
-Today the disk layout is intentionally small:
+The current disk image is intentionally small and easy to reason about:
 
-- `LAZERS-ESP`: the EFI System Partition used only for firmware-visible boot artifacts
+- `LAZERS-ESP`: the EFI System Partition used only for boot artifacts
 - `LAZERS-SYSTEM`: the runtime root filesystem mounted as `/`
 
-Current runtime conventions are still bootstrap-oriented:
+The ESP exists for firmware and the loader. The runtime system exists for the kernel and userspace.
+
+Today that means:
 
 - the loader lives at `/EFI/BOOT/BOOTX64.EFI` on the ESP
 - the kernel image lives at `/lazers/kernel.elf` on the ESP
-- normal runtime paths resolve against the `LAZERS-SYSTEM` partition only
-- shipped user programs are currently staged under `/bin`
+- normal runtime paths resolve only against `LAZERS-SYSTEM`
+- shipped commands are currently staged under `/bin`
 - `lash` resolves bare command names to `/bin/<name>`
 
-This keeps the first system image simple, but it is not the intended long-term hierarchy.
+This is a practical bootstrap layout, not the intended final namespace.
 
-## Intended Runtime Layout
+## Runtime Layout Direction
 
 The intended top-level runtime layout is:
 
@@ -35,39 +38,45 @@ The intended top-level runtime layout is:
 - `/home`: user home directories, including `/home/root` instead of a separate `/root`
 - `/sys`: a future virtual system interface for live kernel, device, and runtime information
 
-Important implications:
+The main ideas behind this layout are:
 
-- `/system` is for static OS content, not dynamic runtime state
-- `/sys` is reserved for virtual runtime/system exposure and must not be used as a static file store
-- `/apps` is the preferred replacement for Unix-style `/usr`
-- `/home` is the user-facing data root
+- `/system` is for static operating-system content
+- `/apps` is for installed application content
+- `/home` is for user data
+- `/sys` is reserved for live system information, not static files
 
-## Migration Path
+This is why Lazers does not plan to use `/sys` as a store for built-in binaries. That name is more useful for a future virtual runtime interface.
 
-The current `/bin` bootstrap layout should eventually be replaced by `/system/bin`.
+## What This Means For The Kernel
 
-The intended sequence is:
+The kernel should stay narrow here:
 
-1. Keep `/bin` as the bootstrap command location while the early shell and command set are still stabilizing.
-2. Add process-owned environment variables and shell-side `PATH` resolution.
-3. Change the default shell command search path to prefer `/system/bin` and `/apps/bin`.
-4. Move OS-provided binaries from `/bin` to `/system/bin`.
-5. Decide whether `/bin` remains as a temporary compatibility alias or disappears entirely.
+- it mounts the runtime root filesystem
+- it resolves explicit paths
+- it loads executables from those explicit paths
 
-Kernel responsibilities should stay narrow during that transition:
+The kernel should not own command-search policy. That belongs in userspace, especially once environment variables and `PATH` exist.
 
-- the kernel executes explicit paths
-- the shell resolves bare command names using policy such as `PATH`
-- filesystem layout policy should remain in userspace wherever possible
+## Migration From `/bin`
 
-## Non-Goals
+The current `/bin` layout is a bootstrap convenience. The intended direction is to move OS-provided commands into `/system/bin`.
 
-This document does not define:
+The planned sequence is:
 
-- package formats or installers
+1. keep `/bin` while the early shell and command set are still stabilizing
+2. add inherited environment variables and shell-side `PATH`
+3. make the shell prefer `/system/bin` and `/apps/bin`
+4. move shipped binaries from `/bin` to `/system/bin`
+5. decide whether `/bin` remains as a temporary compatibility path or disappears
+
+## Intentionally Deferred
+
+This page does not define:
+
+- package formats
 - writable filesystem policy
 - logs, caches, or temporary-file locations
 - device-file compatibility layers
-- whether `/apps` will eventually support versioned package trees
+- versioned application trees under `/apps`
 
-Those decisions should be made when the surrounding runtime and package model are ready.
+Those choices should be made when the surrounding package and storage model is ready.

@@ -22,9 +22,13 @@ export default defineConfig({
                 {
                     text: 'Architecture',
                     items: [
-                        {text: 'Boot Process', link: '/architecture/boot-process'},
-                        {text: 'Kernel', link: '/architecture/kernel'},
-                        {text: 'User Space', link: '/architecture/user-space'},
+                        {text: "System Vision", link: '/architecture/system-vision'},
+                        {text: "Boot Process", link: '/architecture/boot-process'},
+                        {text: "Storage Model", link: '/architecture/storage-and-loading'},
+                        {text: "File System", link: '/architecture/filesystem-layout'},
+                        {text: "Kernel Interface", link: '/architecture/user-kernel-interface'},
+                        {text: "Runtime Model", link: '/architecture/runtime-model'},
+                        {text: "Text Runtime", link: '/architecture/text-runtime'},
                     ]
                 }
             ]
