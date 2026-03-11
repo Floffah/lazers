@@ -67,7 +67,10 @@ Important tasks include:
 - `just setup-toolchain` - install Rust toolchain components and target specifications
 - `just run` - Builds everything, assembles the disk image, and runs it in QEMU with GUI
 - `just run-headless` - Same as `just run` but runs QEMU in headless mode and saves a screenshot of the framebuffer output to `build/qemu-headless.png` hopefully after boot (for debugging kernel really)
+- `just run-selftest` - Boots the kernel into self-test mode, via the selftest binary.
+- `just run-selftest-headless` - Same as `just run-selftest` but captures a headless screenshot
 - `just check` - runs a monorepo wide `cargo check` 
+- `just test` - runs a monorepo wide `cargo test`
 - `just clean` - cleans build artifacts across the monorepo
 
 Other tasks for debugging and development include:
@@ -75,6 +78,7 @@ Other tasks for debugging and development include:
 - `just build-kernel` - builds the kernel only
 - `just build-user` - builds the user binaries only
 - `just image` - assembles the disk image from the boot, kernel, and user artifacts
+- `just image-selftest` - assembles a separate image that launches `/bin/selftest` as the first user program
 
 ## Running
 

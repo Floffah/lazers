@@ -2,7 +2,8 @@
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD_DIR="$ROOT_DIR/build"
-IMAGE_PATH="$BUILD_DIR/lazers.img"
+IMAGE_NAME="${LAZERS_IMAGE_NAME:-lazers.img}"
+IMAGE_PATH="$BUILD_DIR/$IMAGE_NAME"
 
 find_ovmf_code() {
   local candidate

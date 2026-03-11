@@ -4,6 +4,8 @@ loader_target := "x86_64-unknown-uefi"
 kernel_target := "x86_64-unknown-none"
 kernel_rustflags := "-C relocation-model=static -C link-arg=-Tkernel/kernel/linker.ld -C link-arg=-no-pie -C link-arg=--build-id=none -C link-arg=-z -C link-arg=max-page-size=0x1000"
 user_rustflags := "-C relocation-model=static -C link-arg=-Tlibs/liblazer/linker.ld -C link-arg=-no-pie -C link-arg=--build-id=none -C link-arg=-z -C link-arg=max-page-size=0x1000"
+default_initial_user_program := "/bin/lash"
+selftest_initial_user_program := "/bin/selftest"
 
 default:
     @just --list
@@ -22,11 +24,15 @@ build-user:
         cp "target/{{kernel_target}}/release/${package}" "build/${package}" ; \
     done
 
-build-kernel:
-    RUSTFLAGS='{{kernel_rustflags}}' cargo build --release --package kernel --target {{kernel_target}}
+build-kernel initial_user_program=default_initial_user_program:
+    LAZERS_INITIAL_USER_PROGRAM='{{initial_user_program}}' RUSTFLAGS='{{kernel_rustflags}}' cargo build --release --package kernel --target {{kernel_target}}
 
 image: build-loader build-user build-kernel
     tools/scripts/build-image.sh
+
+image-selftest: build-loader build-user
+    just build-kernel {{selftest_initial_user_program}}
+    LAZERS_IMAGE_NAME='lazers-selftest.img' tools/scripts/build-image.sh lasers-selftest.img
 
 build: image
 
@@ -35,6 +41,12 @@ run: image
 
 run-headless: image
     bash tools/scripts/run-qemu-headless.sh
+
+run-selftest: image-selftest
+    LAZERS_IMAGE_NAME=lazers-selftest.img bash tools/scripts/run-qemu.sh
+
+run-selftest-headless: image-selftest
+    LAZERS_IMAGE_NAME=lazers-selftest.img bash tools/scripts/run-qemu-headless.sh
 
 check:
     cargo check --package boot-info

@@ -32,6 +32,11 @@ use memory::LoadedUserProgram;
 
 global_asm!(include_str!("main.asm"));
 
+const INITIAL_USER_PROGRAM: &str = match option_env!("LAZERS_INITIAL_USER_PROGRAM") {
+    Some(path) => path,
+    None => "/bin/lash",
+};
+
 #[no_mangle]
 /// First Rust entrypoint after the assembly `_start` shim.
 ///
@@ -67,7 +72,7 @@ pub extern "sysv64" fn kernel_main(boot_info: *const BootInfo) -> ! {
 
     storage::init_root_fs()
         .unwrap_or_else(|error| panic!("failed to mount root filesystem: {}", error.as_str()));
-    let user_program = load_user_program_from_disk("/bin/lash");
+    let user_program = load_user_program_from_disk(INITIAL_USER_PROGRAM);
 
     scheduler::init();
     let kernel_process = scheduler::create_process(scheduler::ProcessConfig {
@@ -77,7 +82,7 @@ pub extern "sysv64" fn kernel_main(boot_info: *const BootInfo) -> ! {
         owned_pages: memory::OwnedPages::empty(),
     });
     let user_process = scheduler::create_process(scheduler::ProcessConfig {
-        name: "user-lash",
+        name: "user-bootstrap",
         address_space: user_program.address_space,
         terminal_endpoint: Some(endpoint),
         owned_pages: user_program.owned_pages,
@@ -85,7 +90,7 @@ pub extern "sysv64" fn kernel_main(boot_info: *const BootInfo) -> ! {
     let _terminal_thread = scheduler::create_kernel_thread("terminal", kernel_process, terminal_thread_entry);
     kprintln!();
     let _user_thread = scheduler::create_user_thread(
-        "user-lash-main",
+        "user-bootstrap-main",
         user_process,
         user_program.entry_point,
         user_program.user_stack_top,

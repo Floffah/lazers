@@ -3,7 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD_DIR="$ROOT_DIR/build"
-IMAGE_PATH="$BUILD_DIR/lazers.img"
+IMAGE_NAME="${LAZERS_IMAGE_NAME:-lazers.img}"
+IMAGE_PATH="$BUILD_DIR/$IMAGE_NAME"
 ESP_MOUNT_POINT="/Volumes/LAZERSESP"
 SYSTEM_MOUNT_POINT="/Volumes/LAZERSSYS"
 LOADER_PATH="$ROOT_DIR/target/x86_64-unknown-uefi/release/uefi-loader.efi"
