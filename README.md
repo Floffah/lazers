@@ -75,6 +75,14 @@ Other tasks for debugging and development include:
 - `just build-user` - builds the user binaries only
 - `just image` - assembles the disk image from the boot, kernel, and user artifacts
 
+## Running
+
+If running on macOS, make sure you have qemu (homebrew) and rust installed with the correct toolchain (`just setup-toolchain`).
+Then all you need to do is run `just run` and everything will be built and you'll see the QEMU window pop up running lazers.
+
+For actual hardware, I've not tested this, but it's probably possible.
+Likely all it involves is building it on macOS of course, running `just image`, and then flashing the resulting `build/lazers.img` to a disk drive or USB and booting from that on UEFI (x86) hardware.
+
 ## Development
 
 Scripting and tooling currently only supports macOS, but the image will run anywhere QEMU x86 is supported.

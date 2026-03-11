@@ -39,7 +39,6 @@ run-headless: image
 check:
     cargo check --package boot-info
     cargo check --package elf
-    cargo test --package lash
     cargo check --package liblazer --target {{kernel_target}}
     cargo check --package uefi-loader --target {{loader_target}}
     USER_PACKAGES="$(for dir in user/*; do if [[ -d "${dir}" ]]; then basename "${dir}"; fi; done | sort)" ; \
@@ -47,6 +46,9 @@ check:
         cargo check --package "${package}" --target {{kernel_target}} ; \
     done
     cargo check --package kernel --target {{kernel_target}}
+
+test: check
+    cargo test --package lash
 
 clean:
     cargo clean
