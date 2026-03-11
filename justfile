@@ -71,3 +71,12 @@ workspace-metadata:
 
 tree:
     find . -maxdepth 3 -type d | sort
+
+docs-dev:
+    bunx vitepress dev docs
+
+docs-build:
+    bunx vitepress build docs
+
+docs:
+    bunx vitepress preview docs
