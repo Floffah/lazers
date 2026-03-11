@@ -43,6 +43,7 @@ This is the high-level roadmap for Lazers as it exists now. It tracks major capa
 - [x] Userland `argv` exposed through `liblazer::args()`
 - [x] Read-only file access from userland beyond directory listing and first file-content command: `cat`
 - [ ] Better shell command parsing beyond split-on-space tokenization
+- [x] First in-OS status-based userland self-test command: `selftest`
 - [ ] Richer command argument support across userland programs
 - [ ] More core commands beyond the bootstrap set
 - [ ] Better shell/session policy for top-level `lash` exit and eventual halt/shutdown behavior
