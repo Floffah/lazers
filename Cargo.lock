@@ -48,7 +48,12 @@ version = "0.1.0"
 dependencies = [
  "boot-info",
  "elf",
+ "kernel-abi",
 ]
+
+[[package]]
+name = "kernel-abi"
+version = "0.1.0"
 
 [[package]]
 name = "lash"
@@ -60,6 +65,9 @@ dependencies = [
 [[package]]
 name = "liblazer"
 version = "0.1.0"
+dependencies = [
+ "kernel-abi",
+]
 
 [[package]]
 name = "log"

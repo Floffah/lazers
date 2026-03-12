@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 boot-info.workspace = true
 elf.workspace = true
+kernel-abi.workspace = true
 
 [build-dependencies]
 

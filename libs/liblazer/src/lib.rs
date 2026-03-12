@@ -13,50 +13,9 @@ use core::fmt::Write;
 use core::panic::PanicInfo;
 use core::slice;
 use core::str;
+use kernel_abi::Syscall;
 
-const SYS_READ: usize = 0;
-const SYS_WRITE: usize = 1;
-const SYS_YIELD: usize = 2;
-const SYS_EXIT: usize = 3;
-const SYS_SPAWN_WAIT: usize = 4;
-const SYS_READ_DIR: usize = 5;
-const SYS_CHDIR: usize = 6;
-const SYS_GETCWD: usize = 7;
-const SYS_READ_FILE: usize = 8;
-const SYS_GET_ENV: usize = 9;
-const SYS_SET_ENV: usize = 10;
-const SYS_UNSET_ENV: usize = 11;
 const MAX_SPAWN_ARG_DATA: usize = 512;
-const SPAWN_ERROR_INVALID_PATH: usize = usize::MAX;
-const SPAWN_ERROR_FILE_NOT_FOUND: usize = usize::MAX - 1;
-const SPAWN_ERROR_INVALID_EXECUTABLE: usize = usize::MAX - 2;
-const SPAWN_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 3;
-const READ_DIR_ERROR_INVALID_PATH: usize = usize::MAX;
-const READ_DIR_ERROR_NOT_FOUND: usize = usize::MAX - 1;
-const READ_DIR_ERROR_BUFFER_TOO_SMALL: usize = usize::MAX - 2;
-const READ_DIR_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 3;
-const CHDIR_ERROR_INVALID_PATH: usize = usize::MAX;
-const CHDIR_ERROR_NOT_FOUND: usize = usize::MAX - 1;
-const CHDIR_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 2;
-const GETCWD_ERROR_BUFFER_TOO_SMALL: usize = usize::MAX;
-const GETCWD_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 1;
-const READ_FILE_ERROR_INVALID_PATH: usize = usize::MAX;
-const READ_FILE_ERROR_NOT_FOUND: usize = usize::MAX - 1;
-const READ_FILE_ERROR_NOT_A_FILE: usize = usize::MAX - 2;
-const READ_FILE_ERROR_BUFFER_TOO_SMALL: usize = usize::MAX - 3;
-const READ_FILE_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 4;
-const GET_ENV_ERROR_INVALID_KEY: usize = usize::MAX;
-const GET_ENV_ERROR_NOT_FOUND: usize = usize::MAX - 1;
-const GET_ENV_ERROR_BUFFER_TOO_SMALL: usize = usize::MAX - 2;
-const GET_ENV_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 3;
-const SET_ENV_ERROR_INVALID_KEY: usize = usize::MAX;
-const SET_ENV_ERROR_KEY_TOO_LONG: usize = usize::MAX - 1;
-const SET_ENV_ERROR_VALUE_TOO_LONG: usize = usize::MAX - 2;
-const SET_ENV_ERROR_CAPACITY_EXCEEDED: usize = usize::MAX - 3;
-const SET_ENV_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 4;
-const UNSET_ENV_ERROR_INVALID_KEY: usize = usize::MAX;
-const UNSET_ENV_ERROR_NOT_FOUND: usize = usize::MAX - 1;
-const UNSET_ENV_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 2;
 
 global_asm!(include_str!("lib.asm"));
 
@@ -161,12 +120,12 @@ static mut STARTUP_ARGS: StartupArgs = StartupArgs {
 
 /// Reads bytes from a process-owned descriptor into the provided buffer.
 pub fn read(fd: usize, buffer: &mut [u8]) -> usize {
-    unsafe { user_syscall3(SYS_READ, fd, buffer.as_mut_ptr() as usize, buffer.len()) }
+    unsafe { user_syscall3(Syscall::Read as usize, fd, buffer.as_mut_ptr() as usize, buffer.len()) }
 }
 
 /// Writes bytes to a process-owned descriptor from the provided buffer.
 pub fn write(fd: usize, buffer: &[u8]) -> usize {
-    unsafe { user_syscall3(SYS_WRITE, fd, buffer.as_ptr() as usize, buffer.len()) }
+    unsafe { user_syscall3(Syscall::Write as usize, fd, buffer.as_ptr() as usize, buffer.len()) }
 }
 
 /// Reads from the current process' standard input stream.
@@ -187,14 +146,14 @@ pub fn stderr_write(buffer: &[u8]) -> usize {
 /// Cooperatively yields the current process' thread.
 pub fn yield_now() {
     unsafe {
-        let _ = user_syscall0(SYS_YIELD);
+        let _ = user_syscall0(Syscall::Yield as usize);
     }
 }
 
 /// Terminates the current process and never returns.
 pub fn exit(code: usize) -> ! {
     unsafe {
-        let _ = user_syscall1(SYS_EXIT, code);
+        let _ = user_syscall1(Syscall::Exit as usize, code);
     }
 
     loop {
@@ -221,7 +180,7 @@ pub fn spawn_wait(path: &str, args: &[&str]) -> Result<usize, SpawnError> {
     })?;
     let status = unsafe {
         user_syscall4(
-            SYS_SPAWN_WAIT,
+            Syscall::SpawnWait as usize,
             path.as_ptr() as usize,
             path.len(),
             payload.as_ptr() as usize,
@@ -229,10 +188,10 @@ pub fn spawn_wait(path: &str, args: &[&str]) -> Result<usize, SpawnError> {
         )
     };
     match status {
-        SPAWN_ERROR_INVALID_PATH => Err(SpawnError::InvalidPath),
-        SPAWN_ERROR_FILE_NOT_FOUND => Err(SpawnError::FileNotFound),
-        SPAWN_ERROR_INVALID_EXECUTABLE => Err(SpawnError::InvalidExecutable),
-        SPAWN_ERROR_RESOURCE_UNAVAILABLE => Err(SpawnError::ResourceUnavailable),
+        kernel_abi::spawn_wait::INVALID_PATH => Err(SpawnError::InvalidPath),
+        kernel_abi::spawn_wait::FILE_NOT_FOUND => Err(SpawnError::FileNotFound),
+        kernel_abi::spawn_wait::INVALID_EXECUTABLE => Err(SpawnError::InvalidExecutable),
+        kernel_abi::spawn_wait::RESOURCE_UNAVAILABLE => Err(SpawnError::ResourceUnavailable),
         _ => Ok(status),
     }
 }
@@ -241,7 +200,7 @@ pub fn spawn_wait(path: &str, args: &[&str]) -> Result<usize, SpawnError> {
 pub fn read_dir(path: &str, buffer: &mut [u8]) -> Result<usize, ReadDirError> {
     let status = unsafe {
         user_syscall4(
-            SYS_READ_DIR,
+            Syscall::ReadDir as usize,
             path.as_ptr() as usize,
             path.len(),
             buffer.as_mut_ptr() as usize,
@@ -249,32 +208,34 @@ pub fn read_dir(path: &str, buffer: &mut [u8]) -> Result<usize, ReadDirError> {
         )
     };
     match status {
-        READ_DIR_ERROR_INVALID_PATH => Err(ReadDirError::InvalidPath),
-        READ_DIR_ERROR_NOT_FOUND => Err(ReadDirError::NotFound),
-        READ_DIR_ERROR_BUFFER_TOO_SMALL => Err(ReadDirError::BufferTooSmall),
-        READ_DIR_ERROR_RESOURCE_UNAVAILABLE => Err(ReadDirError::ResourceUnavailable),
+        kernel_abi::read_dir::INVALID_PATH => Err(ReadDirError::InvalidPath),
+        kernel_abi::read_dir::NOT_FOUND => Err(ReadDirError::NotFound),
+        kernel_abi::read_dir::BUFFER_TOO_SMALL => Err(ReadDirError::BufferTooSmall),
+        kernel_abi::read_dir::RESOURCE_UNAVAILABLE => Err(ReadDirError::ResourceUnavailable),
         _ => Ok(status),
     }
 }
 
 /// Changes the current process working directory.
 pub fn chdir(path: &str) -> Result<(), ChdirError> {
-    let status = unsafe { user_syscall3(SYS_CHDIR, path.as_ptr() as usize, path.len(), 0) };
+    let status =
+        unsafe { user_syscall3(Syscall::Chdir as usize, path.as_ptr() as usize, path.len(), 0) };
     match status {
         0 => Ok(()),
-        CHDIR_ERROR_INVALID_PATH => Err(ChdirError::InvalidPath),
-        CHDIR_ERROR_NOT_FOUND => Err(ChdirError::NotFound),
-        CHDIR_ERROR_RESOURCE_UNAVAILABLE => Err(ChdirError::ResourceUnavailable),
+        kernel_abi::chdir::INVALID_PATH => Err(ChdirError::InvalidPath),
+        kernel_abi::chdir::NOT_FOUND => Err(ChdirError::NotFound),
+        kernel_abi::chdir::RESOURCE_UNAVAILABLE => Err(ChdirError::ResourceUnavailable),
         _ => Err(ChdirError::ResourceUnavailable),
     }
 }
 
 /// Copies the current process working directory into the provided buffer.
 pub fn getcwd(buffer: &mut [u8]) -> Result<usize, GetCwdError> {
-    let status = unsafe { user_syscall3(SYS_GETCWD, buffer.as_mut_ptr() as usize, buffer.len(), 0) };
+    let status =
+        unsafe { user_syscall3(Syscall::GetCwd as usize, buffer.as_mut_ptr() as usize, buffer.len(), 0) };
     match status {
-        GETCWD_ERROR_BUFFER_TOO_SMALL => Err(GetCwdError::BufferTooSmall),
-        GETCWD_ERROR_RESOURCE_UNAVAILABLE => Err(GetCwdError::ResourceUnavailable),
+        kernel_abi::getcwd::BUFFER_TOO_SMALL => Err(GetCwdError::BufferTooSmall),
+        kernel_abi::getcwd::RESOURCE_UNAVAILABLE => Err(GetCwdError::ResourceUnavailable),
         _ => Ok(status),
     }
 }
@@ -283,7 +244,7 @@ pub fn getcwd(buffer: &mut [u8]) -> Result<usize, GetCwdError> {
 pub fn read_file(path: &str, buffer: &mut [u8]) -> Result<usize, ReadFileError> {
     let status = unsafe {
         user_syscall4(
-            SYS_READ_FILE,
+            Syscall::ReadFile as usize,
             path.as_ptr() as usize,
             path.len(),
             buffer.as_mut_ptr() as usize,
@@ -291,11 +252,11 @@ pub fn read_file(path: &str, buffer: &mut [u8]) -> Result<usize, ReadFileError> 
         )
     };
     match status {
-        READ_FILE_ERROR_INVALID_PATH => Err(ReadFileError::InvalidPath),
-        READ_FILE_ERROR_NOT_FOUND => Err(ReadFileError::NotFound),
-        READ_FILE_ERROR_NOT_A_FILE => Err(ReadFileError::NotAFile),
-        READ_FILE_ERROR_BUFFER_TOO_SMALL => Err(ReadFileError::BufferTooSmall),
-        READ_FILE_ERROR_RESOURCE_UNAVAILABLE => Err(ReadFileError::ResourceUnavailable),
+        kernel_abi::read_file::INVALID_PATH => Err(ReadFileError::InvalidPath),
+        kernel_abi::read_file::NOT_FOUND => Err(ReadFileError::NotFound),
+        kernel_abi::read_file::NOT_A_FILE => Err(ReadFileError::NotAFile),
+        kernel_abi::read_file::BUFFER_TOO_SMALL => Err(ReadFileError::BufferTooSmall),
+        kernel_abi::read_file::RESOURCE_UNAVAILABLE => Err(ReadFileError::ResourceUnavailable),
         _ => Ok(status),
     }
 }
@@ -304,7 +265,7 @@ pub fn read_file(path: &str, buffer: &mut [u8]) -> Result<usize, ReadFileError> 
 pub fn get_env(key: &str, buffer: &mut [u8]) -> Result<usize, GetEnvError> {
     let status = unsafe {
         user_syscall4(
-            SYS_GET_ENV,
+            Syscall::GetEnv as usize,
             key.as_ptr() as usize,
             key.len(),
             buffer.as_mut_ptr() as usize,
@@ -312,10 +273,10 @@ pub fn get_env(key: &str, buffer: &mut [u8]) -> Result<usize, GetEnvError> {
         )
     };
     match status {
-        GET_ENV_ERROR_INVALID_KEY => Err(GetEnvError::InvalidKey),
-        GET_ENV_ERROR_NOT_FOUND => Err(GetEnvError::NotFound),
-        GET_ENV_ERROR_BUFFER_TOO_SMALL => Err(GetEnvError::BufferTooSmall),
-        GET_ENV_ERROR_RESOURCE_UNAVAILABLE => Err(GetEnvError::ResourceUnavailable),
+        kernel_abi::get_env::INVALID_KEY => Err(GetEnvError::InvalidKey),
+        kernel_abi::get_env::NOT_FOUND => Err(GetEnvError::NotFound),
+        kernel_abi::get_env::BUFFER_TOO_SMALL => Err(GetEnvError::BufferTooSmall),
+        kernel_abi::get_env::RESOURCE_UNAVAILABLE => Err(GetEnvError::ResourceUnavailable),
         _ => Ok(status),
     }
 }
@@ -324,7 +285,7 @@ pub fn get_env(key: &str, buffer: &mut [u8]) -> Result<usize, GetEnvError> {
 pub fn set_env(key: &str, value: &str) -> Result<(), SetEnvError> {
     let status = unsafe {
         user_syscall4(
-            SYS_SET_ENV,
+            Syscall::SetEnv as usize,
             key.as_ptr() as usize,
             key.len(),
             value.as_ptr() as usize,
@@ -333,23 +294,24 @@ pub fn set_env(key: &str, value: &str) -> Result<(), SetEnvError> {
     };
     match status {
         0 => Ok(()),
-        SET_ENV_ERROR_INVALID_KEY => Err(SetEnvError::InvalidKey),
-        SET_ENV_ERROR_KEY_TOO_LONG => Err(SetEnvError::KeyTooLong),
-        SET_ENV_ERROR_VALUE_TOO_LONG => Err(SetEnvError::ValueTooLong),
-        SET_ENV_ERROR_CAPACITY_EXCEEDED => Err(SetEnvError::CapacityExceeded),
-        SET_ENV_ERROR_RESOURCE_UNAVAILABLE => Err(SetEnvError::ResourceUnavailable),
+        kernel_abi::set_env::INVALID_KEY => Err(SetEnvError::InvalidKey),
+        kernel_abi::set_env::KEY_TOO_LONG => Err(SetEnvError::KeyTooLong),
+        kernel_abi::set_env::VALUE_TOO_LONG => Err(SetEnvError::ValueTooLong),
+        kernel_abi::set_env::CAPACITY_EXCEEDED => Err(SetEnvError::CapacityExceeded),
+        kernel_abi::set_env::RESOURCE_UNAVAILABLE => Err(SetEnvError::ResourceUnavailable),
         _ => Err(SetEnvError::ResourceUnavailable),
     }
 }
 
 /// Removes one process-owned environment variable.
 pub fn unset_env(key: &str) -> Result<(), UnsetEnvError> {
-    let status = unsafe { user_syscall3(SYS_UNSET_ENV, key.as_ptr() as usize, key.len(), 0) };
+    let status =
+        unsafe { user_syscall3(Syscall::UnsetEnv as usize, key.as_ptr() as usize, key.len(), 0) };
     match status {
         0 => Ok(()),
-        UNSET_ENV_ERROR_INVALID_KEY => Err(UnsetEnvError::InvalidKey),
-        UNSET_ENV_ERROR_NOT_FOUND => Err(UnsetEnvError::NotFound),
-        UNSET_ENV_ERROR_RESOURCE_UNAVAILABLE => Err(UnsetEnvError::ResourceUnavailable),
+        kernel_abi::unset_env::INVALID_KEY => Err(UnsetEnvError::InvalidKey),
+        kernel_abi::unset_env::NOT_FOUND => Err(UnsetEnvError::NotFound),
+        kernel_abi::unset_env::RESOURCE_UNAVAILABLE => Err(UnsetEnvError::ResourceUnavailable),
         _ => Err(UnsetEnvError::ResourceUnavailable),
     }
 }

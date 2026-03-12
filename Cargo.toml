@@ -5,6 +5,7 @@ members = [
     "kernel/kernel",
     "libs/boot-info",
     "libs/elf",
+    "libs/kernel-abi",
     "libs/liblazer",
     "user/cat",
     "user/echo",
@@ -22,6 +23,7 @@ publish = false
 [workspace.dependencies]
 boot-info = { path = "libs/boot-info" }
 elf = { path = "libs/elf" }
+kernel-abi = { path = "libs/kernel-abi" }
 liblazer = { path = "libs/liblazer" }
 
 [profile.dev]
