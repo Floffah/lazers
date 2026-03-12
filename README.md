@@ -44,6 +44,8 @@ This is the high-level roadmap for Lazers as it exists now. It tracks major capa
 - [x] Read-only file access from userland beyond directory listing and first file-content command: `cat`
 - [ ] Better shell command parsing beyond split-on-space tokenization
 - [x] First in-OS status-based userland self-test command: `selftest`
+- [ ] Serial console / serial logging support
+  - [ ] ^ so in-OS selftest results can be captured reliably on the host
 - [ ] Richer command argument support across userland programs
 - [ ] More core commands beyond the bootstrap set
 - [ ] Better shell/session policy for top-level `lash` exit and eventual halt/shutdown behavior
@@ -69,6 +71,7 @@ Important tasks include:
 - `just run-headless` - Same as `just run` but runs QEMU in headless mode and saves a screenshot of the framebuffer output to `build/qemu-headless.png` hopefully after boot (for debugging kernel really)
 - `just run-selftest` - Boots the kernel into self-test mode, via the selftest binary.
 - `just run-selftest-headless` - Same as `just run-selftest` but captures a headless screenshot
+- Future improvement: headless selftest should also emit host-readable serial output so a later `just full-test` target can fail automatically when in-OS tests fail.
 - `just check` - runs a monorepo wide `cargo check` 
 - `just test` - runs a monorepo wide `cargo test`
 - `just clean` - cleans build artifacts across the monorepo

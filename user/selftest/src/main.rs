@@ -11,7 +11,7 @@
 use core::str;
 
 use liblazer::{
-    self, println, ChdirError, GetCwdError, GetEnvError, SetEnvError, SpawnError,
+    self, println, ChdirError, GetCwdError, GetEnvError, ListEnvError, SetEnvError, SpawnError,
     UnsetEnvError,
 };
 
@@ -81,9 +81,18 @@ const TESTS: &[TestCase] = &[
         name: "env.invalid-key",
         run: test_env_invalid_key,
     },
+    TestCase {
+        name: "env.listing",
+        run: test_env_listing,
+    },
+    TestCase {
+        name: "env.listing-after-unset",
+        run: test_env_listing_after_unset,
+    },
 ];
 
 const ENV_BUFFER_SIZE: usize = 128;
+const ENV_LIST_BUFFER_SIZE: usize = 512;
 const SELFTEST_ENV_KEY: &str = "SELFTEST_KEY";
 
 fn main() -> ! {
@@ -272,6 +281,30 @@ fn test_env_invalid_key() -> Result<(), &'static str> {
     }
 }
 
+fn test_env_listing() -> Result<(), &'static str> {
+    clear_env(SELFTEST_ENV_KEY);
+    set_env(SELFTEST_ENV_KEY, "alpha")?;
+    let contains = env_listing_contains("SELFTEST_KEY=alpha\n")?;
+    clear_env(SELFTEST_ENV_KEY);
+    if contains {
+        Ok(())
+    } else {
+        Err("env listing did not include the expected key/value")
+    }
+}
+
+fn test_env_listing_after_unset() -> Result<(), &'static str> {
+    clear_env(SELFTEST_ENV_KEY);
+    set_env(SELFTEST_ENV_KEY, "alpha")?;
+    unset_env(SELFTEST_ENV_KEY)?;
+    let contains = env_listing_contains("SELFTEST_KEY=")?;
+    if !contains {
+        Ok(())
+    } else {
+        Err("env listing still contained the removed key")
+    }
+}
+
 fn ensure_root() -> Result<(), &'static str> {
     change_dir("/")
 }
@@ -333,6 +366,17 @@ fn unset_env(key: &str) -> Result<(), &'static str> {
 
 fn clear_env(key: &str) {
     let _ = liblazer::unset_env(key);
+}
+
+fn env_listing_contains(needle: &str) -> Result<bool, &'static str> {
+    let mut buffer = [0u8; ENV_LIST_BUFFER_SIZE];
+    let len = match liblazer::list_env(&mut buffer) {
+        Ok(len) => len,
+        Err(ListEnvError::BufferTooSmall) => return Err("list_env buffer too small"),
+        Err(ListEnvError::ResourceUnavailable) => return Err("list_env reported resource unavailable"),
+    };
+    let text = str::from_utf8(&buffer[..len]).map_err(|_| "env listing was not valid utf-8")?;
+    Ok(text.contains(needle))
 }
 
 fn assert_env(key: &str, expected: &str) -> Result<(), &'static str> {

@@ -22,6 +22,7 @@ pub enum Syscall {
     GetEnv = 9,
     SetEnv = 10,
     UnsetEnv = 11,
+    ListEnv = 12,
 }
 
 /// Raw result codes for `spawn_wait`.
@@ -84,4 +85,10 @@ pub mod unset_env {
     pub const INVALID_KEY: usize = usize::MAX;
     pub const NOT_FOUND: usize = usize::MAX - 1;
     pub const RESOURCE_UNAVAILABLE: usize = usize::MAX - 2;
+}
+
+/// Raw result codes for `list_env`.
+pub mod list_env {
+    pub const BUFFER_TOO_SMALL: usize = usize::MAX;
+    pub const RESOURCE_UNAVAILABLE: usize = usize::MAX - 1;
 }

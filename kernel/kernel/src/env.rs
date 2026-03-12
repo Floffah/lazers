@@ -110,6 +110,34 @@ impl Environment {
         }
         None
     }
+
+    /// Serializes the current environment as newline-delimited `KEY=VALUE`
+    /// entries in insertion order.
+    pub fn write_listing_into(&self, buffer: &mut [u8]) -> Result<usize, EnvironmentError> {
+        let mut written = 0usize;
+        let mut index = 0usize;
+        while index < self.len {
+            let entry = &self.entries[index];
+            let needed = entry.key_len + 1 + entry.value_len + 1;
+            if written + needed > buffer.len() {
+                return Err(EnvironmentError::CapacityExceeded);
+            }
+
+            let key = &entry.key[..entry.key_len];
+            let value = &entry.value[..entry.value_len];
+            buffer[written..written + key.len()].copy_from_slice(key);
+            written += key.len();
+            buffer[written] = b'=';
+            written += 1;
+            buffer[written..written + value.len()].copy_from_slice(value);
+            written += value.len();
+            buffer[written] = b'\n';
+            written += 1;
+            index += 1;
+        }
+
+        Ok(written)
+    }
 }
 
 impl Default for Environment {

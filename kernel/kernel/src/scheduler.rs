@@ -297,6 +297,20 @@ pub fn current_process_get_env(
     })
 }
 
+/// Serializes the current process environment into a caller-provided buffer.
+pub fn current_process_list_env(buffer: &mut [u8]) -> Result<usize, EnvironmentAccessError> {
+    with_scheduler(|scheduler| {
+        let current = scheduler
+            .current_thread
+            .ok_or(EnvironmentAccessError::ResourceUnavailable)?;
+        let process_id = scheduler.thread(current).process_id();
+        scheduler
+            .process(process_id)
+            .list_env_into(buffer)
+            .map_err(map_environment_error)
+    })
+}
+
 /// Inserts or updates one environment variable on the current process.
 pub fn current_process_set_env(key: &str, value: &str) -> Result<(), EnvironmentAccessError> {
     with_scheduler_mut(|scheduler| {

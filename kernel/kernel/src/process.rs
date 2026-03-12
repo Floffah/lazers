@@ -140,6 +140,11 @@ impl Process {
         self.env.get(key)
     }
 
+    /// Serializes the process-owned environment into the provided buffer.
+    pub fn list_env_into(&self, buffer: &mut [u8]) -> Result<usize, EnvironmentError> {
+        self.env.write_listing_into(buffer)
+    }
+
     /// Removes all environment variables from the process.
     #[allow(dead_code)]
     pub fn clear_env(&mut self) {

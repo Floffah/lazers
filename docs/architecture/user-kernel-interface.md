@@ -52,6 +52,7 @@ Today it provides:
 - argv access through `args()`
 - cwd helpers
 - environment-variable helpers
+- environment-variable listing
 - directory listing helpers
 - whole-file read helpers
 - synchronous child-process spawn
@@ -124,6 +125,7 @@ Those values are not intended to be the final user-facing API. `liblazer` maps t
 - `GetEnvError`
 - `SetEnvError`
 - `UnsetEnvError`
+- `ListEnvError`
 
 This keeps the kernel ABI simple while still letting userland write clear Rust code.
 
@@ -248,6 +250,15 @@ The current syscall surface is intentionally small and process-oriented.
 - Success: zero-like success mapped to `Ok(())`
 - Failure at `liblazer` level: `UnsetEnvError`
 
+### `12` — `list_env`
+
+- Purpose: serialize the current process environment into a caller-provided buffer
+- Arguments:
+  - output buffer pointer
+  - output buffer length
+- Success: number of bytes written
+- Failure at `liblazer` level: `ListEnvError`
+
 ## What This Interface Does Not Provide Yet
 
 The current boundary is useful, but intentionally incomplete.
@@ -257,7 +268,6 @@ It does not yet provide:
 - file descriptors for arbitrary files
 - open/read/close style file APIs
 - pipes or output capture
-- environment-variable listing
 - asynchronous child control
 - signals
 - networking

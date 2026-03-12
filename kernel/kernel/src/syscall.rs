@@ -56,6 +56,9 @@ pub fn dispatch(frame: &mut TrapFrame) {
         value if value == Syscall::UnsetEnv as u64 => {
             frame.rax = syscall_unset_env(frame.rdi, frame.rsi as usize) as u64;
         }
+        value if value == Syscall::ListEnv as u64 => {
+            frame.rax = syscall_list_env(frame.rdi, frame.rsi as usize) as u64;
+        }
         _ => {
             frame.rax = 0;
         }
@@ -290,6 +293,27 @@ fn syscall_unset_env(key_address: u64, key_len: usize) -> usize {
         Err(crate::scheduler::EnvironmentAccessError::ResourceUnavailable)
         | Err(crate::scheduler::EnvironmentAccessError::BufferTooSmall) => {
             kernel_abi::unset_env::RESOURCE_UNAVAILABLE
+        }
+    }
+}
+
+fn syscall_list_env(buffer_address: u64, buffer_len: usize) -> usize {
+    let Some(buffer) = memory::user_slice_mut(buffer_address, buffer_len) else {
+        return kernel_abi::list_env::RESOURCE_UNAVAILABLE;
+    };
+
+    match crate::scheduler::current_process_list_env(buffer) {
+        Ok(bytes_written) => bytes_written,
+        Err(crate::scheduler::EnvironmentAccessError::BufferTooSmall)
+        | Err(crate::scheduler::EnvironmentAccessError::CapacityExceeded) => {
+            kernel_abi::list_env::BUFFER_TOO_SMALL
+        }
+        Err(crate::scheduler::EnvironmentAccessError::InvalidKey)
+        | Err(crate::scheduler::EnvironmentAccessError::KeyTooLong)
+        | Err(crate::scheduler::EnvironmentAccessError::ValueTooLong)
+        | Err(crate::scheduler::EnvironmentAccessError::NotFound)
+        | Err(crate::scheduler::EnvironmentAccessError::ResourceUnavailable) => {
+            kernel_abi::list_env::RESOURCE_UNAVAILABLE
         }
     }
 }

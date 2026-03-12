@@ -107,6 +107,12 @@ pub enum UnsetEnvError {
     ResourceUnavailable,
 }
 
+/// First-step userspace environment-listing failures.
+pub enum ListEnvError {
+    BufferTooSmall,
+    ResourceUnavailable,
+}
+
 #[derive(Clone, Copy)]
 struct StartupArgs {
     argc: usize,
@@ -313,6 +319,18 @@ pub fn unset_env(key: &str) -> Result<(), UnsetEnvError> {
         kernel_abi::unset_env::NOT_FOUND => Err(UnsetEnvError::NotFound),
         kernel_abi::unset_env::RESOURCE_UNAVAILABLE => Err(UnsetEnvError::ResourceUnavailable),
         _ => Err(UnsetEnvError::ResourceUnavailable),
+    }
+}
+
+/// Serializes the current process environment as newline-delimited `KEY=VALUE`
+/// entries in insertion order.
+pub fn list_env(buffer: &mut [u8]) -> Result<usize, ListEnvError> {
+    let status =
+        unsafe { user_syscall3(Syscall::ListEnv as usize, buffer.as_mut_ptr() as usize, buffer.len(), 0) };
+    match status {
+        kernel_abi::list_env::BUFFER_TOO_SMALL => Err(ListEnvError::BufferTooSmall),
+        kernel_abi::list_env::RESOURCE_UNAVAILABLE => Err(ListEnvError::ResourceUnavailable),
+        _ => Ok(status),
     }
 }
 
