@@ -114,6 +114,15 @@ impl Process {
         Some(())
     }
 
+    /// Duplicates stdin while replacing stdout/stderr with null sinks.
+    pub fn inherit_stdio_silent_into(&self, child: &mut Process) -> Option<()> {
+        let stdin = child.install_handle(self.resolve_fd(0)?)?;
+        let stdout = child.install_handle(KernelObject::Null)?;
+        let stderr = child.install_handle(KernelObject::Null)?;
+        child.set_stdio(StdioHandles::new(stdin, stdout, stderr));
+        Some(())
+    }
+
     /// Copies this process' current working directory into a child process.
     pub fn inherit_cwd_into(&self, child: &mut Process) -> Option<()> {
         child.set_cwd(self.cwd())?;

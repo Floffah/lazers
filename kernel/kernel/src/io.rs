@@ -21,6 +21,7 @@ pub struct HandleId(pub usize);
 /// model grow. For now, terminal endpoints are enough to exercise stdio.
 pub enum KernelObject {
     TerminalEndpoint(&'static TerminalEndpoint),
+    Null,
 }
 
 impl KernelObject {
@@ -28,6 +29,7 @@ impl KernelObject {
     pub fn read_byte(self) -> Option<u8> {
         match self {
             Self::TerminalEndpoint(endpoint) => endpoint.pop_input_byte(),
+            Self::Null => None,
         }
     }
 
@@ -35,6 +37,10 @@ impl KernelObject {
     pub fn write_byte(self, byte: u8) -> bool {
         match self {
             Self::TerminalEndpoint(endpoint) => endpoint.push_output_byte(byte),
+            Self::Null => {
+                let _ = byte;
+                true
+            }
         }
     }
 }

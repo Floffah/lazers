@@ -171,7 +171,7 @@ fn test_cwd_chdir_parent() -> Result<(), &'static str> {
 }
 
 fn test_spawn_echo_zero() -> Result<(), &'static str> {
-    let status = spawn("/bin/echo", &["selftest"])?;
+    let status = spawn_silent("/bin/echo", &["selftest"])?;
     if status == 0 {
         Ok(())
     } else {
@@ -180,7 +180,7 @@ fn test_spawn_echo_zero() -> Result<(), &'static str> {
 }
 
 fn test_spawn_ls_zero() -> Result<(), &'static str> {
-    let status = spawn("/bin/ls", &[])?;
+    let status = spawn_silent("/bin/ls", &[])?;
     if status == 0 {
         Ok(())
     } else {
@@ -189,7 +189,7 @@ fn test_spawn_ls_zero() -> Result<(), &'static str> {
 }
 
 fn test_spawn_cat_missing_fails() -> Result<(), &'static str> {
-    let status = spawn("/bin/cat", &["/no-such-file"])?;
+    let status = spawn_silent("/bin/cat", &["/no-such-file"])?;
     if status != 0 {
         Ok(())
     } else {
@@ -209,7 +209,7 @@ fn test_spawn_invalid_path_fails() -> Result<(), &'static str> {
 
 fn test_spawn_relative_cwd() -> Result<(), &'static str> {
     change_dir("/bin")?;
-    let status = spawn("./echo", &["selftest"])?;
+    let status = spawn_silent("./echo", &["selftest"])?;
     if status == 0 {
         Ok(())
     } else {
@@ -327,7 +327,7 @@ fn test_env_listing_after_unset() -> Result<(), &'static str> {
 
 fn test_path_lookup_via_env() -> Result<(), &'static str> {
     set_env("PATH", "/bin")?;
-    let status = spawn("/bin/lash", &["-c", "echo"])?;
+    let status = spawn_silent("/bin/lash", &["-c", "echo"])?;
     if status == 0 {
         set_env("PATH", "/bin")?;
         Ok(())
@@ -339,7 +339,7 @@ fn test_path_lookup_via_env() -> Result<(), &'static str> {
 
 fn test_path_missing_fails() -> Result<(), &'static str> {
     clear_env("PATH");
-    let status = spawn("/bin/lash", &["-c", "echo"])?;
+    let status = spawn_silent("/bin/lash", &["-c", "echo"])?;
     if status != 0 {
         set_env("PATH", "/bin")?;
         Ok(())
@@ -351,7 +351,7 @@ fn test_path_missing_fails() -> Result<(), &'static str> {
 
 fn test_path_invalid_entry_ignored() -> Result<(), &'static str> {
     set_env("PATH", "bin:/bin")?;
-    let status = spawn("/bin/lash", &["-c", "echo"])?;
+    let status = spawn_silent("/bin/lash", &["-c", "echo"])?;
     if status == 0 {
         set_env("PATH", "/bin")?;
         Ok(())
@@ -363,7 +363,7 @@ fn test_path_invalid_entry_ignored() -> Result<(), &'static str> {
 
 fn test_where_lookup_via_path() -> Result<(), &'static str> {
     set_env("PATH", "/bin")?;
-    let status = spawn("/bin/lash", &["-c", "where echo"])?;
+    let status = spawn_silent("/bin/lash", &["-c", "where echo"])?;
     if status == 0 {
         Ok(())
     } else {
@@ -373,7 +373,7 @@ fn test_where_lookup_via_path() -> Result<(), &'static str> {
 
 fn test_where_path_missing_fails() -> Result<(), &'static str> {
     clear_env("PATH");
-    let status = spawn("/bin/lash", &["-c", "where echo"])?;
+    let status = spawn_silent("/bin/lash", &["-c", "where echo"])?;
     if status != 0 {
         set_env("PATH", "/bin")?;
         Ok(())
@@ -412,8 +412,8 @@ fn assert_cwd(expected: &str) -> Result<(), &'static str> {
     }
 }
 
-fn spawn(path: &str, args: &[&str]) -> Result<usize, &'static str> {
-    match liblazer::spawn_wait(path, args) {
+fn spawn_silent(path: &str, args: &[&str]) -> Result<usize, &'static str> {
+    match liblazer::spawn_wait_silent(path, args) {
         Ok(status) => Ok(status),
         Err(SpawnError::InvalidPath) => Err("spawn reported invalid path"),
         Err(SpawnError::FileNotFound) => Err("spawn reported file not found"),

@@ -179,6 +179,15 @@ pub fn args() -> Args {
 
 /// Runs a child process from an absolute or cwd-relative path and blocks until it exits.
 pub fn spawn_wait(path: &str, args: &[&str]) -> Result<usize, SpawnError> {
+    spawn_wait_impl(Syscall::SpawnWait, path, args)
+}
+
+/// Runs a child process with inherited stdin and nulled stdout/stderr.
+pub fn spawn_wait_silent(path: &str, args: &[&str]) -> Result<usize, SpawnError> {
+    spawn_wait_impl(Syscall::SpawnWaitSilent, path, args)
+}
+
+fn spawn_wait_impl(syscall: Syscall, path: &str, args: &[&str]) -> Result<usize, SpawnError> {
     let mut payload = [0u8; MAX_SPAWN_ARG_DATA];
     let payload_len = serialize_spawn_args(args, &mut payload).map_err(|error| match error {
         SpawnSerializeError::InvalidUtf8 => SpawnError::InvalidPath,
@@ -186,7 +195,7 @@ pub fn spawn_wait(path: &str, args: &[&str]) -> Result<usize, SpawnError> {
     })?;
     let status = unsafe {
         user_syscall4(
-            Syscall::SpawnWait as usize,
+            syscall as usize,
             path.as_ptr() as usize,
             path.len(),
             payload.as_ptr() as usize,

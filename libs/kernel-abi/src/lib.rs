@@ -23,6 +23,7 @@ pub enum Syscall {
     SetEnv = 10,
     UnsetEnv = 11,
     ListEnv = 12,
+    SpawnWaitSilent = 13,
 }
 
 /// Raw result codes for `spawn_wait`.

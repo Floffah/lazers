@@ -137,6 +137,22 @@ pub fn mark_idle_thread(thread_id: ThreadId) {
 /// Loads a child executable from the runtime root filesystem, runs it with
 /// inherited stdio and cwd, and blocks until it exits.
 pub fn spawn_user_process_and_wait(path: &str, argv_tail: &[u8]) -> Result<usize, SpawnError> {
+    spawn_user_process_and_wait_with_stdio(path, argv_tail, false)
+}
+
+/// Loads a child executable and runs it with inherited stdin and nulled stdout/stderr.
+pub fn spawn_user_process_and_wait_silent(
+    path: &str,
+    argv_tail: &[u8],
+) -> Result<usize, SpawnError> {
+    spawn_user_process_and_wait_with_stdio(path, argv_tail, true)
+}
+
+fn spawn_user_process_and_wait_with_stdio(
+    path: &str,
+    argv_tail: &[u8],
+    silent_stdio: bool,
+) -> Result<usize, SpawnError> {
     let current = with_scheduler(|scheduler| scheduler.current_thread)
         .ok_or(SpawnError::ResourceUnavailable)?;
     let parent_process_id = with_scheduler(|scheduler| scheduler.thread(current).process_id());
@@ -181,7 +197,9 @@ pub fn spawn_user_process_and_wait(path: &str, argv_tail: &[u8]) -> Result<usize
     };
     file.release();
 
-    let child_process = match with_scheduler_mut(|scheduler| scheduler.spawn_child_process(current, program)) {
+    let child_process = match with_scheduler_mut(|scheduler| {
+        scheduler.spawn_child_process(current, program, silent_stdio)
+    }) {
         Ok(process_id) => process_id,
         Err(program) => {
             program.owned_pages.release();
@@ -547,6 +565,7 @@ impl SchedulerState {
         &mut self,
         parent_thread: ThreadId,
         program: LoadedUserProgram,
+        silent_stdio: bool,
     ) -> Result<ProcessId, LoadedUserProgram> {
         let LoadedUserProgram {
             address_space,
@@ -566,11 +585,14 @@ impl SchedulerState {
         let process_id = ProcessId(slot);
         let mut child = Process::new(process_id, "user-child", address_space, owned_pages);
 
-        if self
-            .process(parent_process_id)
-            .inherit_stdio_into(&mut child)
-            .is_none()
-        {
+        let inherited_stdio = if silent_stdio {
+            self.process(parent_process_id)
+                .inherit_stdio_silent_into(&mut child)
+        } else {
+            self.process(parent_process_id).inherit_stdio_into(&mut child)
+        };
+
+        if inherited_stdio.is_none() {
             return Err(LoadedUserProgram {
                 address_space: child.address_space(),
                 entry_point,

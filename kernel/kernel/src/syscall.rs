@@ -31,6 +31,11 @@ pub fn dispatch(frame: &mut TrapFrame) {
         value if value == Syscall::SpawnWait as u64 => {
             frame.rax = syscall_spawn_wait(frame.rdi, frame.rsi as usize, frame.rdx, frame.rcx as usize) as u64;
         }
+        value if value == Syscall::SpawnWaitSilent as u64 => {
+            frame.rax =
+                syscall_spawn_wait_silent(frame.rdi, frame.rsi as usize, frame.rdx, frame.rcx as usize)
+                    as u64;
+        }
         value if value == Syscall::ReadDir as u64 => {
             frame.rax =
                 syscall_read_dir(frame.rdi, frame.rsi as usize, frame.rdx, frame.rcx as usize) as u64;
@@ -93,6 +98,35 @@ fn syscall_spawn_wait(path_address: u64, path_len: usize, argv_address: u64, arg
     };
 
     match crate::scheduler::spawn_user_process_and_wait(path, argv_tail) {
+        Ok(status) => status,
+        Err(crate::scheduler::SpawnError::InvalidPath) => kernel_abi::spawn_wait::INVALID_PATH,
+        Err(crate::scheduler::SpawnError::FileNotFound) => kernel_abi::spawn_wait::FILE_NOT_FOUND,
+        Err(crate::scheduler::SpawnError::InvalidExecutable) => {
+            kernel_abi::spawn_wait::INVALID_EXECUTABLE
+        }
+        Err(crate::scheduler::SpawnError::ResourceUnavailable) => {
+            kernel_abi::spawn_wait::RESOURCE_UNAVAILABLE
+        }
+    }
+}
+
+fn syscall_spawn_wait_silent(
+    path_address: u64,
+    path_len: usize,
+    argv_address: u64,
+    argv_len: usize,
+) -> usize {
+    let Some(path_bytes) = memory::user_slice(path_address, path_len) else {
+        return kernel_abi::spawn_wait::INVALID_PATH;
+    };
+    let Ok(path) = core::str::from_utf8(path_bytes) else {
+        return kernel_abi::spawn_wait::INVALID_PATH;
+    };
+    let Some(argv_tail) = memory::user_slice(argv_address, argv_len) else {
+        return kernel_abi::spawn_wait::RESOURCE_UNAVAILABLE;
+    };
+
+    match crate::scheduler::spawn_user_process_and_wait_silent(path, argv_tail) {
         Ok(status) => status,
         Err(crate::scheduler::SpawnError::InvalidPath) => kernel_abi::spawn_wait::INVALID_PATH,
         Err(crate::scheduler::SpawnError::FileNotFound) => kernel_abi::spawn_wait::FILE_NOT_FOUND,
