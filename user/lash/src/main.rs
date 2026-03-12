@@ -13,10 +13,14 @@ use lash::{
     scan_segments, ParseError, SegmentOperator, TokenizedCommand, LINE_CAPACITY,
     MAX_COMMAND_ARGS,
 };
-use liblazer::{self, print, println, ChdirError, ListEnvError, SetEnvError, SpawnError, UnsetEnvError};
+use liblazer::{
+    self, print, println, ChdirError, GetEnvError, ListEnvError, SetEnvError,
+    SpawnError, UnsetEnvError,
+};
 
-const COMMAND_PATH_CAPACITY: usize = LINE_CAPACITY + 5;
+const COMMAND_PATH_CAPACITY: usize = LINE_CAPACITY + 1 + 128;
 const ENV_LIST_BUFFER_CAPACITY: usize = 1024;
+const PATH_BUFFER_CAPACITY: usize = 128;
 
 liblazer::entry!(main);
 
@@ -322,17 +326,99 @@ impl Shell {
             index += 1;
         }
 
-        let mut command_path = [0u8; COMMAND_PATH_CAPACITY];
-        let spawn_path = if command.starts_with('/') || command.as_bytes().contains(&b'/') {
-            command
-        } else {
-            command_path[..5].copy_from_slice(b"/bin/");
-            let command_bytes = command.as_bytes();
-            command_path[5..5 + command_bytes.len()].copy_from_slice(command_bytes);
-            core::str::from_utf8(&command_path[..5 + command_bytes.len()]).unwrap_or(command)
+        if command.starts_with('/') || command.as_bytes().contains(&b'/') {
+            return self.run_command_at_path(command, command, &arguments[..argument_count], mode);
+        }
+
+        self.run_path_command(command, &arguments[..argument_count], mode)
+    }
+
+    fn command_not_found(&self, command: &str) {
+        println!("lash: command not found: {}", command);
+    }
+
+    fn run_path_command(&self, command: &str, arguments: &[&str], mode: ExecutionMode) -> usize {
+        let mut path_buffer = [0u8; PATH_BUFFER_CAPACITY];
+        let path_len = match liblazer::get_env("PATH", &mut path_buffer) {
+            Ok(len) => len,
+            Err(GetEnvError::InvalidKey | GetEnvError::NotFound | GetEnvError::BufferTooSmall)
+            | Err(GetEnvError::ResourceUnavailable) => {
+                self.command_not_found(command);
+                return 1;
+            }
         };
 
-        match liblazer::spawn_wait(spawn_path, &arguments[..argument_count]) {
+        let path = match core::str::from_utf8(&path_buffer[..path_len]) {
+            Ok(path) => path,
+            Err(_) => {
+                self.command_not_found(command);
+                return 1;
+            }
+        };
+
+        let mut candidate_buffer = [0u8; COMMAND_PATH_CAPACITY];
+        let mut segment_start = 0usize;
+        while segment_start <= path.len() {
+            let remainder = &path[segment_start..];
+            let segment_len = remainder.find(':').unwrap_or(remainder.len());
+            let entry = &remainder[..segment_len];
+
+            if !entry.is_empty() && entry.starts_with('/') {
+                let needed = entry.len() + 1 + command.len();
+                if needed > candidate_buffer.len() {
+                    println!("lash: unable to run command: resource unavailable");
+                    return 1;
+                }
+
+                candidate_buffer[..entry.len()].copy_from_slice(entry.as_bytes());
+                candidate_buffer[entry.len()] = b'/';
+                candidate_buffer[entry.len() + 1..needed].copy_from_slice(command.as_bytes());
+                let candidate =
+                    core::str::from_utf8(&candidate_buffer[..needed]).unwrap_or(command);
+
+                match liblazer::spawn_wait(candidate, arguments) {
+                    Ok(0) => return 0,
+                    Ok(status) => {
+                        if matches!(mode, ExecutionMode::Interactive) {
+                            println!("lash: command exited with status {}", status);
+                            println!();
+                        }
+                        return status;
+                    }
+                    Err(SpawnError::FileNotFound) => {}
+                    Err(SpawnError::InvalidPath) => {
+                        println!("lash: invalid path: {}", candidate);
+                        return 1;
+                    }
+                    Err(SpawnError::InvalidExecutable) => {
+                        println!("lash: invalid executable: {}", candidate);
+                        return 1;
+                    }
+                    Err(SpawnError::ResourceUnavailable) => {
+                        println!("lash: unable to run command: resource unavailable");
+                        return 1;
+                    }
+                }
+            }
+
+            if segment_start + segment_len >= path.len() {
+                break;
+            }
+            segment_start += segment_len + 1;
+        }
+
+        self.command_not_found(command);
+        1
+    }
+
+    fn run_command_at_path(
+        &self,
+        display_name: &str,
+        path: &str,
+        arguments: &[&str],
+        mode: ExecutionMode,
+    ) -> usize {
+        match liblazer::spawn_wait(path, arguments) {
             Ok(0) => 0,
             Ok(status) => {
                 if matches!(mode, ExecutionMode::Interactive) {
@@ -342,15 +428,15 @@ impl Shell {
                 status
             }
             Err(SpawnError::FileNotFound) => {
-                self.command_not_found(command);
+                self.command_not_found(display_name);
                 1
             }
             Err(SpawnError::InvalidPath) => {
-                println!("lash: invalid path: {}", spawn_path);
+                println!("lash: invalid path: {}", path);
                 1
             }
             Err(SpawnError::InvalidExecutable) => {
-                println!("lash: invalid executable: {}", spawn_path);
+                println!("lash: invalid executable: {}", path);
                 1
             }
             Err(SpawnError::ResourceUnavailable) => {
@@ -358,10 +444,6 @@ impl Shell {
                 1
             }
         }
-    }
-
-    fn command_not_found(&self, command: &str) {
-        println!("lash: command not found: {}", command);
     }
 
     fn print_parse_error(&self, mode: ExecutionMode) {

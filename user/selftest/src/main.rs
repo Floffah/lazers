@@ -89,6 +89,18 @@ const TESTS: &[TestCase] = &[
         name: "env.listing-after-unset",
         run: test_env_listing_after_unset,
     },
+    TestCase {
+        name: "path.lookup-via-env",
+        run: test_path_lookup_via_env,
+    },
+    TestCase {
+        name: "path.missing-fails",
+        run: test_path_missing_fails,
+    },
+    TestCase {
+        name: "path.invalid-entry-ignored",
+        run: test_path_invalid_entry_ignored,
+    },
 ];
 
 const ENV_BUFFER_SIZE: usize = 128;
@@ -302,6 +314,42 @@ fn test_env_listing_after_unset() -> Result<(), &'static str> {
         Ok(())
     } else {
         Err("env listing still contained the removed key")
+    }
+}
+
+fn test_path_lookup_via_env() -> Result<(), &'static str> {
+    set_env("PATH", "/bin")?;
+    let status = spawn("/bin/lash", &["-c", "echo"])?;
+    if status == 0 {
+        set_env("PATH", "/bin")?;
+        Ok(())
+    } else {
+        set_env("PATH", "/bin")?;
+        Err("lash failed to resolve echo through PATH")
+    }
+}
+
+fn test_path_missing_fails() -> Result<(), &'static str> {
+    clear_env("PATH");
+    let status = spawn("/bin/lash", &["-c", "echo"])?;
+    if status != 0 {
+        set_env("PATH", "/bin")?;
+        Ok(())
+    } else {
+        set_env("PATH", "/bin")?;
+        Err("lash unexpectedly resolved bare command with PATH unset")
+    }
+}
+
+fn test_path_invalid_entry_ignored() -> Result<(), &'static str> {
+    set_env("PATH", "bin:/bin")?;
+    let status = spawn("/bin/lash", &["-c", "echo"])?;
+    if status == 0 {
+        set_env("PATH", "/bin")?;
+        Ok(())
+    } else {
+        set_env("PATH", "/bin")?;
+        Err("lash did not ignore invalid PATH entry before valid /bin")
     }
 }
 

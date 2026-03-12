@@ -76,6 +76,23 @@ pub fn create_process(config: ProcessConfig) -> ProcessId {
     })
 }
 
+/// Inserts or updates one environment variable on a specific process.
+///
+/// This is used during bootstrap to seed the initial user process before the
+/// shell or other user programs begin mutating their own environment.
+pub fn set_process_env(
+    process_id: ProcessId,
+    key: &str,
+    value: &str,
+) -> Result<(), EnvironmentAccessError> {
+    with_scheduler_mut(|scheduler| {
+        scheduler
+            .process_mut(process_id)
+            .set_env(key, value)
+            .map_err(map_environment_error)
+    })
+}
+
 /// Creates a kernel-mode thread owned by an existing process.
 pub fn create_kernel_thread(
     name: &'static str,
