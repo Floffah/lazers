@@ -17,6 +17,9 @@ const SYS_READ_DIR: u64 = 5;
 const SYS_CHDIR: u64 = 6;
 const SYS_GETCWD: u64 = 7;
 const SYS_READ_FILE: u64 = 8;
+const SYS_GET_ENV: u64 = 9;
+const SYS_SET_ENV: u64 = 10;
+const SYS_UNSET_ENV: u64 = 11;
 
 const SPAWN_ERROR_INVALID_PATH: usize = usize::MAX;
 const SPAWN_ERROR_FILE_NOT_FOUND: usize = usize::MAX - 1;
@@ -36,6 +39,18 @@ const READ_FILE_ERROR_NOT_FOUND: usize = usize::MAX - 1;
 const READ_FILE_ERROR_NOT_A_FILE: usize = usize::MAX - 2;
 const READ_FILE_ERROR_BUFFER_TOO_SMALL: usize = usize::MAX - 3;
 const READ_FILE_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 4;
+const GET_ENV_ERROR_INVALID_KEY: usize = usize::MAX;
+const GET_ENV_ERROR_NOT_FOUND: usize = usize::MAX - 1;
+const GET_ENV_ERROR_BUFFER_TOO_SMALL: usize = usize::MAX - 2;
+const GET_ENV_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 3;
+const SET_ENV_ERROR_INVALID_KEY: usize = usize::MAX;
+const SET_ENV_ERROR_KEY_TOO_LONG: usize = usize::MAX - 1;
+const SET_ENV_ERROR_VALUE_TOO_LONG: usize = usize::MAX - 2;
+const SET_ENV_ERROR_CAPACITY_EXCEEDED: usize = usize::MAX - 3;
+const SET_ENV_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 4;
+const UNSET_ENV_ERROR_INVALID_KEY: usize = usize::MAX;
+const UNSET_ENV_ERROR_NOT_FOUND: usize = usize::MAX - 1;
+const UNSET_ENV_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 2;
 
 /// Dispatches a syscall trap frame in place.
 ///
@@ -72,6 +87,17 @@ pub fn dispatch(frame: &mut TrapFrame) {
         SYS_READ_FILE => {
             frame.rax =
                 syscall_read_file(frame.rdi, frame.rsi as usize, frame.rdx, frame.rcx as usize) as u64;
+        }
+        SYS_GET_ENV => {
+            frame.rax =
+                syscall_get_env(frame.rdi, frame.rsi as usize, frame.rdx, frame.rcx as usize) as u64;
+        }
+        SYS_SET_ENV => {
+            frame.rax =
+                syscall_set_env(frame.rdi, frame.rsi as usize, frame.rdx, frame.rcx as usize) as u64;
+        }
+        SYS_UNSET_ENV => {
+            frame.rax = syscall_unset_env(frame.rdi, frame.rsi as usize) as u64;
         }
         _ => {
             frame.rax = 0;
@@ -211,5 +237,92 @@ fn syscall_read_file(
         Err(crate::storage::StorageError::NotAFile) => READ_FILE_ERROR_NOT_A_FILE,
         Err(crate::storage::StorageError::BufferTooSmall) => READ_FILE_ERROR_BUFFER_TOO_SMALL,
         Err(_) => READ_FILE_ERROR_RESOURCE_UNAVAILABLE,
+    }
+}
+
+fn syscall_get_env(
+    key_address: u64,
+    key_len: usize,
+    buffer_address: u64,
+    buffer_len: usize,
+) -> usize {
+    let Some(key_bytes) = memory::user_slice(key_address, key_len) else {
+        return GET_ENV_ERROR_INVALID_KEY;
+    };
+    let Ok(key) = core::str::from_utf8(key_bytes) else {
+        return GET_ENV_ERROR_INVALID_KEY;
+    };
+    let Some(buffer) = memory::user_slice_mut(buffer_address, buffer_len) else {
+        return GET_ENV_ERROR_RESOURCE_UNAVAILABLE;
+    };
+
+    match crate::scheduler::current_process_get_env(key, buffer) {
+        Ok(bytes_written) => bytes_written,
+        Err(crate::scheduler::EnvironmentAccessError::InvalidKey)
+        | Err(crate::scheduler::EnvironmentAccessError::KeyTooLong)
+        | Err(crate::scheduler::EnvironmentAccessError::ValueTooLong)
+        | Err(crate::scheduler::EnvironmentAccessError::CapacityExceeded) => GET_ENV_ERROR_INVALID_KEY,
+        Err(crate::scheduler::EnvironmentAccessError::NotFound) => GET_ENV_ERROR_NOT_FOUND,
+        Err(crate::scheduler::EnvironmentAccessError::BufferTooSmall) => GET_ENV_ERROR_BUFFER_TOO_SMALL,
+        Err(crate::scheduler::EnvironmentAccessError::ResourceUnavailable) => {
+            GET_ENV_ERROR_RESOURCE_UNAVAILABLE
+        }
+    }
+}
+
+fn syscall_set_env(
+    key_address: u64,
+    key_len: usize,
+    value_address: u64,
+    value_len: usize,
+) -> usize {
+    let Some(key_bytes) = memory::user_slice(key_address, key_len) else {
+        return SET_ENV_ERROR_INVALID_KEY;
+    };
+    let Ok(key) = core::str::from_utf8(key_bytes) else {
+        return SET_ENV_ERROR_INVALID_KEY;
+    };
+    let Some(value_bytes) = memory::user_slice(value_address, value_len) else {
+        return SET_ENV_ERROR_RESOURCE_UNAVAILABLE;
+    };
+    let Ok(value) = core::str::from_utf8(value_bytes) else {
+        return SET_ENV_ERROR_RESOURCE_UNAVAILABLE;
+    };
+
+    match crate::scheduler::current_process_set_env(key, value) {
+        Ok(()) => 0,
+        Err(crate::scheduler::EnvironmentAccessError::InvalidKey) => SET_ENV_ERROR_INVALID_KEY,
+        Err(crate::scheduler::EnvironmentAccessError::KeyTooLong) => SET_ENV_ERROR_KEY_TOO_LONG,
+        Err(crate::scheduler::EnvironmentAccessError::ValueTooLong) => SET_ENV_ERROR_VALUE_TOO_LONG,
+        Err(crate::scheduler::EnvironmentAccessError::CapacityExceeded) => {
+            SET_ENV_ERROR_CAPACITY_EXCEEDED
+        }
+        Err(crate::scheduler::EnvironmentAccessError::ResourceUnavailable)
+        | Err(crate::scheduler::EnvironmentAccessError::NotFound)
+        | Err(crate::scheduler::EnvironmentAccessError::BufferTooSmall) => {
+            SET_ENV_ERROR_RESOURCE_UNAVAILABLE
+        }
+    }
+}
+
+fn syscall_unset_env(key_address: u64, key_len: usize) -> usize {
+    let Some(key_bytes) = memory::user_slice(key_address, key_len) else {
+        return UNSET_ENV_ERROR_INVALID_KEY;
+    };
+    let Ok(key) = core::str::from_utf8(key_bytes) else {
+        return UNSET_ENV_ERROR_INVALID_KEY;
+    };
+
+    match crate::scheduler::current_process_unset_env(key) {
+        Ok(()) => 0,
+        Err(crate::scheduler::EnvironmentAccessError::InvalidKey)
+        | Err(crate::scheduler::EnvironmentAccessError::KeyTooLong)
+        | Err(crate::scheduler::EnvironmentAccessError::ValueTooLong)
+        | Err(crate::scheduler::EnvironmentAccessError::CapacityExceeded) => UNSET_ENV_ERROR_INVALID_KEY,
+        Err(crate::scheduler::EnvironmentAccessError::NotFound) => UNSET_ENV_ERROR_NOT_FOUND,
+        Err(crate::scheduler::EnvironmentAccessError::ResourceUnavailable)
+        | Err(crate::scheduler::EnvironmentAccessError::BufferTooSmall) => {
+            UNSET_ENV_ERROR_RESOURCE_UNAVAILABLE
+        }
     }
 }

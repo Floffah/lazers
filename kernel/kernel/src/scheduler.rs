@@ -9,6 +9,7 @@ use core::arch::global_asm;
 use core::cell::UnsafeCell;
 
 use crate::arch;
+use crate::env::EnvironmentError;
 use crate::io::{KernelObject, StdioHandles};
 use crate::memory::{AddressSpace, LoadedUserProgram, OwnedPages};
 use crate::process::{Process, ProcessId};
@@ -45,6 +46,18 @@ pub enum SpawnError {
     InvalidPath,
     FileNotFound,
     InvalidExecutable,
+    ResourceUnavailable,
+}
+
+/// Failures surfaced by current-process environment helpers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EnvironmentAccessError {
+    InvalidKey,
+    NotFound,
+    BufferTooSmall,
+    KeyTooLong,
+    ValueTooLong,
+    CapacityExceeded,
     ResourceUnavailable,
 }
 
@@ -256,6 +269,64 @@ pub fn current_process_write(fd: usize, buffer: &[u8]) -> usize {
 /// Copies the current process cwd into a caller-provided buffer.
 pub fn current_process_getcwd(buffer: &mut [u8]) -> Option<usize> {
     with_current_process(|process| process.copy_cwd_into(buffer)).flatten()
+}
+
+/// Looks up one environment variable in the current process and copies it into
+/// a caller-provided buffer.
+pub fn current_process_get_env(
+    key: &str,
+    buffer: &mut [u8],
+) -> Result<usize, EnvironmentAccessError> {
+    with_scheduler(|scheduler| {
+        let current = scheduler
+            .current_thread
+            .ok_or(EnvironmentAccessError::ResourceUnavailable)?;
+        let process_id = scheduler.thread(current).process_id();
+        let process = scheduler.process(process_id);
+        let value = process.env(key).map_err(map_environment_error)?;
+        let Some(value) = value else {
+            return Err(EnvironmentAccessError::NotFound);
+        };
+
+        if buffer.len() < value.len() {
+            return Err(EnvironmentAccessError::BufferTooSmall);
+        }
+
+        buffer[..value.len()].copy_from_slice(value.as_bytes());
+        Ok(value.len())
+    })
+}
+
+/// Inserts or updates one environment variable on the current process.
+pub fn current_process_set_env(key: &str, value: &str) -> Result<(), EnvironmentAccessError> {
+    with_scheduler_mut(|scheduler| {
+        let current = scheduler
+            .current_thread
+            .ok_or(EnvironmentAccessError::ResourceUnavailable)?;
+        let process_id = scheduler.thread(current).process_id();
+        scheduler
+            .process_mut(process_id)
+            .set_env(key, value)
+            .map_err(map_environment_error)
+    })
+}
+
+/// Removes one environment variable from the current process.
+pub fn current_process_unset_env(key: &str) -> Result<(), EnvironmentAccessError> {
+    with_scheduler_mut(|scheduler| {
+        let current = scheduler
+            .current_thread
+            .ok_or(EnvironmentAccessError::ResourceUnavailable)?;
+        let process_id = scheduler.thread(current).process_id();
+        match scheduler
+            .process_mut(process_id)
+            .remove_env(key)
+            .map_err(map_environment_error)?
+        {
+            true => Ok(()),
+            false => Err(EnvironmentAccessError::NotFound),
+        }
+    })
 }
 
 /// Resolves and installs a new cwd for the current process.
@@ -751,5 +822,14 @@ fn map_storage_spawn_error(error: storage::StorageError) -> SpawnError {
         | storage::StorageError::InvalidShortName => SpawnError::InvalidPath,
         storage::StorageError::FileNotFound | storage::StorageError::NotAFile => SpawnError::FileNotFound,
         _ => SpawnError::ResourceUnavailable,
+    }
+}
+
+fn map_environment_error(error: EnvironmentError) -> EnvironmentAccessError {
+    match error {
+        EnvironmentError::InvalidKey => EnvironmentAccessError::InvalidKey,
+        EnvironmentError::KeyTooLong => EnvironmentAccessError::KeyTooLong,
+        EnvironmentError::ValueTooLong => EnvironmentAccessError::ValueTooLong,
+        EnvironmentError::CapacityExceeded => EnvironmentAccessError::CapacityExceeded,
     }
 }

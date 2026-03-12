@@ -56,10 +56,10 @@ impl Environment {
     }
 
     /// Removes one environment variable if it exists.
-    #[allow(dead_code)]
-    pub fn remove(&mut self, key: &str) -> bool {
+    pub fn remove(&mut self, key: &str) -> Result<bool, EnvironmentError> {
+        validate_key(key)?;
         let Some(index) = self.find_index(key) else {
-            return false;
+            return Ok(false);
         };
 
         let mut current = index;
@@ -69,14 +69,14 @@ impl Environment {
         }
         self.len -= 1;
         self.entries[self.len] = EnvEntry::empty();
-        true
+        Ok(true)
     }
 
     /// Returns the value for a key if it exists.
-    #[allow(dead_code)]
-    pub fn get(&self, key: &str) -> Option<&str> {
-        let index = self.find_index(key)?;
-        Some(self.entries[index].value())
+    pub fn get(&self, key: &str) -> Result<Option<&str>, EnvironmentError> {
+        validate_key(key)?;
+        let index = self.find_index(key);
+        Ok(index.map(|entry| self.entries[entry].value()))
     }
 
     /// Removes all environment variables.
@@ -174,7 +174,7 @@ mod tests {
     fn insert_and_lookup_variable() {
         let mut env = Environment::new();
         env.set("SHELL", "/bin/lash").unwrap();
-        assert_eq!(env.get("SHELL"), Some("/bin/lash"));
+        assert_eq!(env.get("SHELL"), Ok(Some("/bin/lash")));
     }
 
     #[test]
@@ -182,22 +182,22 @@ mod tests {
         let mut env = Environment::new();
         env.set("TERM", "vt").unwrap();
         env.set("TERM", "text").unwrap();
-        assert_eq!(env.get("TERM"), Some("text"));
+        assert_eq!(env.get("TERM"), Ok(Some("text")));
     }
 
     #[test]
     fn remove_variable() {
         let mut env = Environment::new();
         env.set("USER", "root").unwrap();
-        assert!(env.remove("USER"));
-        assert_eq!(env.get("USER"), None);
+        assert_eq!(env.remove("USER"), Ok(true));
+        assert_eq!(env.get("USER"), Ok(None));
     }
 
     #[test]
     fn empty_value_is_allowed() {
         let mut env = Environment::new();
         env.set("EMPTY", "").unwrap();
-        assert_eq!(env.get("EMPTY"), Some(""));
+        assert_eq!(env.get("EMPTY"), Ok(Some("")));
     }
 
     #[test]
@@ -205,6 +205,8 @@ mod tests {
         let mut env = Environment::new();
         assert_eq!(env.set("", "x"), Err(EnvironmentError::InvalidKey));
         assert_eq!(env.set("BAD=KEY", "x"), Err(EnvironmentError::InvalidKey));
+        assert_eq!(env.get("BAD=KEY"), Err(EnvironmentError::InvalidKey));
+        assert_eq!(env.remove("BAD=KEY"), Err(EnvironmentError::InvalidKey));
     }
 
     #[test]
@@ -230,12 +232,12 @@ mod tests {
 
         parent.inherit_into(&mut child).unwrap();
         child.set("USER", "guest").unwrap();
-        child.remove("SHELL");
+        child.remove("SHELL").unwrap();
 
-        assert_eq!(parent.get("USER"), Some("root"));
-        assert_eq!(parent.get("SHELL"), Some("/bin/lash"));
-        assert_eq!(child.get("USER"), Some("guest"));
-        assert_eq!(child.get("SHELL"), None);
+        assert_eq!(parent.get("USER"), Ok(Some("root")));
+        assert_eq!(parent.get("SHELL"), Ok(Some("/bin/lash")));
+        assert_eq!(child.get("USER"), Ok(Some("guest")));
+        assert_eq!(child.get("SHELL"), Ok(None));
     }
 
     fn key_for(index: usize) -> std::string::String {

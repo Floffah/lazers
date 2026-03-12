@@ -10,7 +10,10 @@
 
 use core::str;
 
-use liblazer::{self, println, ChdirError, GetCwdError, SpawnError};
+use liblazer::{
+    self, println, ChdirError, GetCwdError, GetEnvError, SetEnvError, SpawnError,
+    UnsetEnvError,
+};
 
 const CWD_BUFFER_SIZE: usize = 256;
 
@@ -54,7 +57,34 @@ const TESTS: &[TestCase] = &[
         name: "spawn.relative-cwd",
         run: test_spawn_relative_cwd,
     },
+    TestCase {
+        name: "env.set-get",
+        run: test_env_set_get,
+    },
+    TestCase {
+        name: "env.update",
+        run: test_env_update,
+    },
+    TestCase {
+        name: "env.unset",
+        run: test_env_unset,
+    },
+    TestCase {
+        name: "env.not-found",
+        run: test_env_not_found,
+    },
+    TestCase {
+        name: "env.empty-value",
+        run: test_env_empty_value,
+    },
+    TestCase {
+        name: "env.invalid-key",
+        run: test_env_invalid_key,
+    },
 ];
+
+const ENV_BUFFER_SIZE: usize = 128;
+const SELFTEST_ENV_KEY: &str = "SELFTEST_KEY";
 
 fn main() -> ! {
     let mut passed = 0usize;
@@ -158,6 +188,90 @@ fn test_spawn_relative_cwd() -> Result<(), &'static str> {
     }
 }
 
+fn test_env_set_get() -> Result<(), &'static str> {
+    clear_env(SELFTEST_ENV_KEY);
+    set_env(SELFTEST_ENV_KEY, "alpha")?;
+    assert_env(SELFTEST_ENV_KEY, "alpha")?;
+    clear_env(SELFTEST_ENV_KEY);
+    Ok(())
+}
+
+fn test_env_update() -> Result<(), &'static str> {
+    clear_env(SELFTEST_ENV_KEY);
+    set_env(SELFTEST_ENV_KEY, "alpha")?;
+    set_env(SELFTEST_ENV_KEY, "beta")?;
+    assert_env(SELFTEST_ENV_KEY, "beta")?;
+    clear_env(SELFTEST_ENV_KEY);
+    Ok(())
+}
+
+fn test_env_unset() -> Result<(), &'static str> {
+    clear_env(SELFTEST_ENV_KEY);
+    set_env(SELFTEST_ENV_KEY, "alpha")?;
+    unset_env(SELFTEST_ENV_KEY)?;
+    match liblazer::get_env(SELFTEST_ENV_KEY, &mut [0u8; ENV_BUFFER_SIZE]) {
+        Err(GetEnvError::NotFound) => Ok(()),
+        Ok(_) => Err("unset variable still existed"),
+        Err(GetEnvError::InvalidKey) => Err("unset variable lookup reported invalid key"),
+        Err(GetEnvError::BufferTooSmall) => Err("unset variable lookup reported buffer too small"),
+        Err(GetEnvError::ResourceUnavailable) => Err("unset variable lookup reported resource unavailable"),
+    }
+}
+
+fn test_env_not_found() -> Result<(), &'static str> {
+    clear_env(SELFTEST_ENV_KEY);
+    match liblazer::get_env(SELFTEST_ENV_KEY, &mut [0u8; ENV_BUFFER_SIZE]) {
+        Err(GetEnvError::NotFound) => Ok(()),
+        Ok(_) => Err("missing variable unexpectedly existed"),
+        Err(GetEnvError::InvalidKey) => Err("missing variable reported invalid key"),
+        Err(GetEnvError::BufferTooSmall) => Err("missing variable reported buffer too small"),
+        Err(GetEnvError::ResourceUnavailable) => Err("missing variable reported resource unavailable"),
+    }
+}
+
+fn test_env_empty_value() -> Result<(), &'static str> {
+    clear_env(SELFTEST_ENV_KEY);
+    set_env(SELFTEST_ENV_KEY, "")?;
+    let mut buffer = [0u8; ENV_BUFFER_SIZE];
+    match liblazer::get_env(SELFTEST_ENV_KEY, &mut buffer) {
+        Ok(0) => {
+            clear_env(SELFTEST_ENV_KEY);
+            Ok(())
+        }
+        Ok(_) => {
+            clear_env(SELFTEST_ENV_KEY);
+            Err("empty value did not round-trip as empty")
+        }
+        Err(GetEnvError::InvalidKey) => {
+            clear_env(SELFTEST_ENV_KEY);
+            Err("empty value lookup reported invalid key")
+        }
+        Err(GetEnvError::NotFound) => {
+            clear_env(SELFTEST_ENV_KEY);
+            Err("empty value variable was missing")
+        }
+        Err(GetEnvError::BufferTooSmall) => {
+            clear_env(SELFTEST_ENV_KEY);
+            Err("empty value lookup reported buffer too small")
+        }
+        Err(GetEnvError::ResourceUnavailable) => {
+            clear_env(SELFTEST_ENV_KEY);
+            Err("empty value lookup reported resource unavailable")
+        }
+    }
+}
+
+fn test_env_invalid_key() -> Result<(), &'static str> {
+    match liblazer::set_env("BAD=KEY", "value") {
+        Err(SetEnvError::InvalidKey) => Ok(()),
+        Ok(()) => Err("invalid env key unexpectedly succeeded"),
+        Err(SetEnvError::KeyTooLong) => Err("invalid env key reported key too long"),
+        Err(SetEnvError::ValueTooLong) => Err("invalid env key reported value too long"),
+        Err(SetEnvError::CapacityExceeded) => Err("invalid env key reported capacity exceeded"),
+        Err(SetEnvError::ResourceUnavailable) => Err("invalid env key reported resource unavailable"),
+    }
+}
+
 fn ensure_root() -> Result<(), &'static str> {
     change_dir("/")
 }
@@ -194,5 +308,46 @@ fn spawn(path: &str, args: &[&str]) -> Result<usize, &'static str> {
         Err(SpawnError::FileNotFound) => Err("spawn reported file not found"),
         Err(SpawnError::InvalidExecutable) => Err("spawn reported invalid executable"),
         Err(SpawnError::ResourceUnavailable) => Err("spawn reported resource unavailable"),
+    }
+}
+
+fn set_env(key: &str, value: &str) -> Result<(), &'static str> {
+    match liblazer::set_env(key, value) {
+        Ok(()) => Ok(()),
+        Err(SetEnvError::InvalidKey) => Err("set_env reported invalid key"),
+        Err(SetEnvError::KeyTooLong) => Err("set_env reported key too long"),
+        Err(SetEnvError::ValueTooLong) => Err("set_env reported value too long"),
+        Err(SetEnvError::CapacityExceeded) => Err("set_env reported capacity exceeded"),
+        Err(SetEnvError::ResourceUnavailable) => Err("set_env reported resource unavailable"),
+    }
+}
+
+fn unset_env(key: &str) -> Result<(), &'static str> {
+    match liblazer::unset_env(key) {
+        Ok(()) => Ok(()),
+        Err(UnsetEnvError::InvalidKey) => Err("unset_env reported invalid key"),
+        Err(UnsetEnvError::NotFound) => Err("unset_env reported missing variable"),
+        Err(UnsetEnvError::ResourceUnavailable) => Err("unset_env reported resource unavailable"),
+    }
+}
+
+fn clear_env(key: &str) {
+    let _ = liblazer::unset_env(key);
+}
+
+fn assert_env(key: &str, expected: &str) -> Result<(), &'static str> {
+    let mut buffer = [0u8; ENV_BUFFER_SIZE];
+    let len = match liblazer::get_env(key, &mut buffer) {
+        Ok(len) => len,
+        Err(GetEnvError::InvalidKey) => return Err("get_env reported invalid key"),
+        Err(GetEnvError::NotFound) => return Err("expected variable was missing"),
+        Err(GetEnvError::BufferTooSmall) => return Err("get_env buffer too small"),
+        Err(GetEnvError::ResourceUnavailable) => return Err("get_env reported resource unavailable"),
+    };
+    let value = str::from_utf8(&buffer[..len]).map_err(|_| "env value was not valid utf-8")?;
+    if value == expected {
+        Ok(())
+    } else {
+        Err("env value did not match expected value")
     }
 }

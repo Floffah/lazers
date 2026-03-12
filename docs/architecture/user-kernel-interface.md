@@ -17,7 +17,7 @@ User programs do not call kernel Rust functions directly.
 
 Instead, a user program:
 
-1. calls a `liblazer` API such as `spawn_wait`, `read_dir`, `getcwd`, or `read_file`
+1. calls a `liblazer` API such as `spawn_wait`, `read_dir`, `getcwd`, `read_file`, or the env helpers
 2. `liblazer` marshals the syscall number and arguments into registers
 3. `liblazer` executes `int 0x80`
 4. the CPU traps into the kernel through the syscall entry in the IDT
@@ -51,6 +51,7 @@ Today it provides:
 - stdio helpers
 - argv access through `args()`
 - cwd helpers
+- environment-variable helpers
 - directory listing helpers
 - whole-file read helpers
 - synchronous child-process spawn
@@ -80,6 +81,7 @@ The kernel owns:
 - process and thread creation
 - address spaces
 - cwd and stdio inheritance
+- environment-variable storage and inheritance
 - filesystem resolution and executable loading
 
 Userland owns:
@@ -101,6 +103,7 @@ When a user program spawns a child:
 - the child is selected by explicit path
 - the child inherits stdio
 - the child inherits cwd
+- the child inherits environment variables
 - the child receives argv startup data
 - the parent waits for the child to exit
 - the child exit status is returned to the parent
@@ -118,6 +121,9 @@ Those values are not intended to be the final user-facing API. `liblazer` maps t
 - `ChdirError`
 - `GetCwdError`
 - `ReadFileError`
+- `GetEnvError`
+- `SetEnvError`
+- `UnsetEnvError`
 
 This keeps the kernel ABI simple while still letting userland write clear Rust code.
 
@@ -211,6 +217,37 @@ The current syscall surface is intentionally small and process-oriented.
 - Success: number of bytes written
 - Failure at `liblazer` level: `ReadFileError`
 
+### `9` — `get_env`
+
+- Purpose: copy one process-owned environment variable into a caller-provided buffer
+- Arguments:
+  - key pointer
+  - key length
+  - output buffer pointer
+  - output buffer length
+- Success: number of bytes written
+- Failure at `liblazer` level: `GetEnvError`
+
+### `10` — `set_env`
+
+- Purpose: insert or update one process-owned environment variable
+- Arguments:
+  - key pointer
+  - key length
+  - value pointer
+  - value length
+- Success: zero-like success mapped to `Ok(())`
+- Failure at `liblazer` level: `SetEnvError`
+
+### `11` — `unset_env`
+
+- Purpose: remove one process-owned environment variable
+- Arguments:
+  - key pointer
+  - key length
+- Success: zero-like success mapped to `Ok(())`
+- Failure at `liblazer` level: `UnsetEnvError`
+
 ## What This Interface Does Not Provide Yet
 
 The current boundary is useful, but intentionally incomplete.
@@ -220,7 +257,7 @@ It does not yet provide:
 - file descriptors for arbitrary files
 - open/read/close style file APIs
 - pipes or output capture
-- environment variables
+- environment-variable listing
 - asynchronous child control
 - signals
 - networking

@@ -23,6 +23,9 @@ const SYS_READ_DIR: usize = 5;
 const SYS_CHDIR: usize = 6;
 const SYS_GETCWD: usize = 7;
 const SYS_READ_FILE: usize = 8;
+const SYS_GET_ENV: usize = 9;
+const SYS_SET_ENV: usize = 10;
+const SYS_UNSET_ENV: usize = 11;
 const MAX_SPAWN_ARG_DATA: usize = 512;
 const SPAWN_ERROR_INVALID_PATH: usize = usize::MAX;
 const SPAWN_ERROR_FILE_NOT_FOUND: usize = usize::MAX - 1;
@@ -42,6 +45,18 @@ const READ_FILE_ERROR_NOT_FOUND: usize = usize::MAX - 1;
 const READ_FILE_ERROR_NOT_A_FILE: usize = usize::MAX - 2;
 const READ_FILE_ERROR_BUFFER_TOO_SMALL: usize = usize::MAX - 3;
 const READ_FILE_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 4;
+const GET_ENV_ERROR_INVALID_KEY: usize = usize::MAX;
+const GET_ENV_ERROR_NOT_FOUND: usize = usize::MAX - 1;
+const GET_ENV_ERROR_BUFFER_TOO_SMALL: usize = usize::MAX - 2;
+const GET_ENV_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 3;
+const SET_ENV_ERROR_INVALID_KEY: usize = usize::MAX;
+const SET_ENV_ERROR_KEY_TOO_LONG: usize = usize::MAX - 1;
+const SET_ENV_ERROR_VALUE_TOO_LONG: usize = usize::MAX - 2;
+const SET_ENV_ERROR_CAPACITY_EXCEEDED: usize = usize::MAX - 3;
+const SET_ENV_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 4;
+const UNSET_ENV_ERROR_INVALID_KEY: usize = usize::MAX;
+const UNSET_ENV_ERROR_NOT_FOUND: usize = usize::MAX - 1;
+const UNSET_ENV_ERROR_RESOURCE_UNAVAILABLE: usize = usize::MAX - 2;
 
 global_asm!(include_str!("lib.asm"));
 
@@ -106,6 +121,30 @@ pub enum ReadFileError {
     NotFound,
     NotAFile,
     BufferTooSmall,
+    ResourceUnavailable,
+}
+
+/// First-step userspace environment lookup failures.
+pub enum GetEnvError {
+    InvalidKey,
+    NotFound,
+    BufferTooSmall,
+    ResourceUnavailable,
+}
+
+/// First-step userspace environment update failures.
+pub enum SetEnvError {
+    InvalidKey,
+    KeyTooLong,
+    ValueTooLong,
+    CapacityExceeded,
+    ResourceUnavailable,
+}
+
+/// First-step userspace environment removal failures.
+pub enum UnsetEnvError {
+    InvalidKey,
+    NotFound,
     ResourceUnavailable,
 }
 
@@ -258,6 +297,60 @@ pub fn read_file(path: &str, buffer: &mut [u8]) -> Result<usize, ReadFileError> 
         READ_FILE_ERROR_BUFFER_TOO_SMALL => Err(ReadFileError::BufferTooSmall),
         READ_FILE_ERROR_RESOURCE_UNAVAILABLE => Err(ReadFileError::ResourceUnavailable),
         _ => Ok(status),
+    }
+}
+
+/// Reads one process-owned environment variable into the provided buffer.
+pub fn get_env(key: &str, buffer: &mut [u8]) -> Result<usize, GetEnvError> {
+    let status = unsafe {
+        user_syscall4(
+            SYS_GET_ENV,
+            key.as_ptr() as usize,
+            key.len(),
+            buffer.as_mut_ptr() as usize,
+            buffer.len(),
+        )
+    };
+    match status {
+        GET_ENV_ERROR_INVALID_KEY => Err(GetEnvError::InvalidKey),
+        GET_ENV_ERROR_NOT_FOUND => Err(GetEnvError::NotFound),
+        GET_ENV_ERROR_BUFFER_TOO_SMALL => Err(GetEnvError::BufferTooSmall),
+        GET_ENV_ERROR_RESOURCE_UNAVAILABLE => Err(GetEnvError::ResourceUnavailable),
+        _ => Ok(status),
+    }
+}
+
+/// Inserts or updates one process-owned environment variable.
+pub fn set_env(key: &str, value: &str) -> Result<(), SetEnvError> {
+    let status = unsafe {
+        user_syscall4(
+            SYS_SET_ENV,
+            key.as_ptr() as usize,
+            key.len(),
+            value.as_ptr() as usize,
+            value.len(),
+        )
+    };
+    match status {
+        0 => Ok(()),
+        SET_ENV_ERROR_INVALID_KEY => Err(SetEnvError::InvalidKey),
+        SET_ENV_ERROR_KEY_TOO_LONG => Err(SetEnvError::KeyTooLong),
+        SET_ENV_ERROR_VALUE_TOO_LONG => Err(SetEnvError::ValueTooLong),
+        SET_ENV_ERROR_CAPACITY_EXCEEDED => Err(SetEnvError::CapacityExceeded),
+        SET_ENV_ERROR_RESOURCE_UNAVAILABLE => Err(SetEnvError::ResourceUnavailable),
+        _ => Err(SetEnvError::ResourceUnavailable),
+    }
+}
+
+/// Removes one process-owned environment variable.
+pub fn unset_env(key: &str) -> Result<(), UnsetEnvError> {
+    let status = unsafe { user_syscall3(SYS_UNSET_ENV, key.as_ptr() as usize, key.len(), 0) };
+    match status {
+        0 => Ok(()),
+        UNSET_ENV_ERROR_INVALID_KEY => Err(UnsetEnvError::InvalidKey),
+        UNSET_ENV_ERROR_NOT_FOUND => Err(UnsetEnvError::NotFound),
+        UNSET_ENV_ERROR_RESOURCE_UNAVAILABLE => Err(UnsetEnvError::ResourceUnavailable),
+        _ => Err(UnsetEnvError::ResourceUnavailable),
     }
 }
 

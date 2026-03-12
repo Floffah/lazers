@@ -126,20 +126,17 @@ impl Process {
     }
 
     /// Inserts or updates an environment variable owned by the process.
-    #[allow(dead_code)]
     pub fn set_env(&mut self, key: &str, value: &str) -> Result<(), EnvironmentError> {
         self.env.set(key, value)
     }
 
     /// Removes an environment variable owned by the process.
-    #[allow(dead_code)]
-    pub fn remove_env(&mut self, key: &str) -> bool {
+    pub fn remove_env(&mut self, key: &str) -> Result<bool, EnvironmentError> {
         self.env.remove(key)
     }
 
     /// Looks up a process-owned environment variable.
-    #[allow(dead_code)]
-    pub fn env(&self, key: &str) -> Option<&str> {
+    pub fn env(&self, key: &str) -> Result<Option<&str>, EnvironmentError> {
         self.env.get(key)
     }
 
