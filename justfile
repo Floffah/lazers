@@ -60,6 +60,7 @@ check:
     cargo check --package kernel --target {{kernel_target}}
 
 test: check
+    cargo test --package kernel --lib
     cargo test --package lash
 
 clean:

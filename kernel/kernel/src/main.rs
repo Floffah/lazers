@@ -1,5 +1,5 @@
-#![no_main]
-#![no_std]
+#![cfg_attr(not(test), no_main)]
+#![cfg_attr(not(test), no_std)]
 
 //! Kernel entry and bootstrap orchestration.
 //!
@@ -13,6 +13,7 @@
 mod macros;
 mod arch;
 mod console;
+mod env;
 mod font;
 mod io;
 mod keyboard;
@@ -26,6 +27,7 @@ mod terminal;
 mod thread;
 
 use core::arch::{asm, global_asm};
+#[cfg(not(test))]
 use core::panic::PanicInfo;
 use boot_info::{BootInfo, PixelFormat};
 use memory::LoadedUserProgram;
@@ -174,6 +176,7 @@ fn idle_thread_entry() -> ! {
     }
 }
 
+#[cfg(not(test))]
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     console::clear();

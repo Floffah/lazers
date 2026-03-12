@@ -21,7 +21,7 @@ use crate::thread::{
 
 const MAX_PROCESSES: usize = 4;
 const MAX_THREADS: usize = 6;
-const THREAD_STACK_SIZE: usize = 16 * 1024;
+const THREAD_STACK_SIZE: usize = 64 * 1024;
 
 static SCHEDULER: SchedulerCell = SchedulerCell::new();
 
@@ -230,6 +230,7 @@ pub fn exit_current_process(status: usize) -> ! {
     };
 
     arch::activate_address_space(switch.next_space, switch.next_stack_top);
+    let _ = switch.released_pages;
     unsafe {
         with_scheduler_mut(|scheduler| {
             context_switch(
@@ -472,7 +473,7 @@ impl SchedulerState {
                 address_space: child.address_space(),
                 entry_point,
                 user_stack_top,
-                owned_pages: child.release_owned_pages(),
+                owned_pages: child.take_owned_pages(),
             });
         }
 
@@ -481,7 +482,16 @@ impl SchedulerState {
                 address_space: child.address_space(),
                 entry_point,
                 user_stack_top,
-                owned_pages: child.release_owned_pages(),
+                owned_pages: child.take_owned_pages(),
+            });
+        }
+
+        if self.process(parent_process_id).inherit_env_into(&mut child).is_err() {
+            return Err(LoadedUserProgram {
+                address_space: child.address_space(),
+                entry_point,
+                user_stack_top,
+                owned_pages: child.take_owned_pages(),
             });
         }
 
@@ -498,12 +508,17 @@ impl SchedulerState {
             )
             .is_none()
         {
-            let child = self.processes[slot].take().expect("child process missing");
+            let address_space = self.process(process_id).address_space();
+            let owned_pages = {
+                let child = self.process_mut(process_id);
+                child.take_owned_pages()
+            };
+            self.processes[slot] = None;
             return Err(LoadedUserProgram {
-                address_space: child.address_space(),
+                address_space,
                 entry_point,
                 user_stack_top,
-                owned_pages: child.release_owned_pages(),
+                owned_pages,
             });
         }
 
@@ -569,19 +584,22 @@ impl SchedulerState {
             process.take_waiting_thread()
         };
 
-        if let Some(waiting_thread) = waiting_thread {
+        self.threads[current_thread.0] = None;
+        let released_pages = {
+            let process = self.process_mut(process_id);
+            process.take_owned_pages()
+        };
+        self.processes[process_id.0] = None;
+
+        let next = if let Some(waiting_thread) = waiting_thread {
             let thread = self.thread_mut(waiting_thread);
             thread.set_wait_result(status);
             thread.wake();
-        }
+            waiting_thread
+        } else {
+            self.next_runnable_thread(Some(current_thread))?
+        };
 
-        self.threads[current_thread.0] = None;
-        let process = self.processes[process_id.0]
-            .take()
-            .expect("current process missing during exit");
-        process.release_resources();
-
-        let next = self.next_runnable_thread(None)?;
         self.current_thread = Some(next);
         self.thread_mut(next).set_state(ThreadState::Running);
         let activation = self.activation(next);
@@ -591,6 +609,7 @@ impl SchedulerState {
             next_context,
             next_space: activation.address_space,
             next_stack_top: activation.kernel_stack_top,
+            released_pages,
         })
     }
 
@@ -701,6 +720,7 @@ struct ExitedThreadSwitch {
     next_context: *const ThreadContext,
     next_space: AddressSpace,
     next_stack_top: u64,
+    released_pages: OwnedPages,
 }
 
 #[derive(Clone, Copy)]

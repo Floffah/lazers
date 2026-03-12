@@ -4,6 +4,7 @@
 //! handle table, and standard streams. Threads execute within a process, but
 //! they do not duplicate these resources.
 
+use crate::env::{Environment, EnvironmentError};
 use crate::io::{HandleId, KernelObject, StdioHandles, MAX_PROCESS_HANDLES};
 use crate::memory::{AddressSpace, OwnedPages};
 use crate::thread::ThreadId;
@@ -34,6 +35,7 @@ pub struct Process {
     waiting_thread: Option<ThreadId>,
     cwd: [u8; MAX_CWD_LEN],
     cwd_len: usize,
+    env: Environment,
     owned_pages: OwnedPages,
 }
 
@@ -55,6 +57,7 @@ impl Process {
             waiting_thread: None,
             cwd: new_root_cwd(),
             cwd_len: 1,
+            env: Environment::new(),
             owned_pages,
         }
     }
@@ -117,6 +120,35 @@ impl Process {
         Some(())
     }
 
+    /// Copies this process' environment block into a child process.
+    pub fn inherit_env_into(&self, child: &mut Process) -> Result<(), EnvironmentError> {
+        self.env.inherit_into(&mut child.env)
+    }
+
+    /// Inserts or updates an environment variable owned by the process.
+    #[allow(dead_code)]
+    pub fn set_env(&mut self, key: &str, value: &str) -> Result<(), EnvironmentError> {
+        self.env.set(key, value)
+    }
+
+    /// Removes an environment variable owned by the process.
+    #[allow(dead_code)]
+    pub fn remove_env(&mut self, key: &str) -> bool {
+        self.env.remove(key)
+    }
+
+    /// Looks up a process-owned environment variable.
+    #[allow(dead_code)]
+    pub fn env(&self, key: &str) -> Option<&str> {
+        self.env.get(key)
+    }
+
+    /// Removes all environment variables from the process.
+    #[allow(dead_code)]
+    pub fn clear_env(&mut self) {
+        self.env.clear();
+    }
+
     /// Returns the process-owned current working directory as a normalized absolute path.
     pub fn cwd(&self) -> &str {
         core::str::from_utf8(&self.cwd[..self.cwd_len]).unwrap_or("/")
@@ -143,14 +175,9 @@ impl Process {
         Some(self.cwd_len)
     }
 
-    /// Releases process-owned memory resources back to the kernel allocator.
-    pub fn release_resources(self) {
-        self.release_owned_pages().release();
-    }
-
-    /// Consumes the process and returns the memory pages it owns.
-    pub fn release_owned_pages(self) -> OwnedPages {
-        self.owned_pages
+    /// Extracts the memory pages currently owned by the process.
+    pub fn take_owned_pages(&mut self) -> OwnedPages {
+        core::mem::replace(&mut self.owned_pages, OwnedPages::empty())
     }
 
     /// Reads bytes from one of the process' standard streams.

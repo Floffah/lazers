@@ -30,6 +30,11 @@ const PHYS_WINDOW_START: u64 = 0x0000_0000_0100_0000;
 
 static MEMORY: MemoryCell = MemoryCell::new();
 
+unsafe extern "C" {
+    static __kernel_start: u8;
+    static __kernel_end: u8;
+}
+
 #[derive(Clone, Copy)]
 /// Page-table root for either the kernel or a user process.
 pub struct AddressSpace {
@@ -568,6 +573,16 @@ impl MemoryState {
             return Err(MemoryError::NoUsableMemory);
         }
 
+        let kernel_start = align_down(
+            core::ptr::addr_of!(__kernel_start) as u64,
+            PAGE_SIZE as u64,
+        );
+        let kernel_end = align_up(
+            core::ptr::addr_of!(__kernel_end) as u64,
+            PAGE_SIZE as u64,
+        );
+        self.allocator.reserve_range(kernel_start, kernel_end);
+
         self.phys_window_end = align_up(highest_end, 2 * 1024 * 1024);
         Ok(())
     }
@@ -730,6 +745,52 @@ impl PhysicalAllocator {
 
         let bytes = (count as u64) * PAGE_SIZE as u64;
         self.insert_range(start, start + bytes);
+    }
+
+    fn reserve_range(&mut self, start: u64, end: u64) {
+        if start >= end {
+            return;
+        }
+
+        let mut index = 0;
+        while index < self.count {
+            let region = self.regions[index];
+            if region.end <= start || region.start >= end {
+                index += 1;
+                continue;
+            }
+
+            if start <= region.start && end >= region.end {
+                self.remove_region(index);
+                continue;
+            }
+
+            if start <= region.start {
+                self.regions[index].start = end.min(region.end);
+                index += 1;
+                continue;
+            }
+
+            if end >= region.end {
+                self.regions[index].end = start.max(region.start);
+                index += 1;
+                continue;
+            }
+
+            assert!(self.count < self.regions.len(), "allocator free-range capacity exhausted");
+
+            let right = PhysicalRegion::new(end, region.end);
+            self.regions[index].end = start;
+
+            let mut shift = self.count;
+            while shift > index + 1 {
+                self.regions[shift] = self.regions[shift - 1];
+                shift -= 1;
+            }
+            self.regions[index + 1] = right;
+            self.count += 1;
+            index += 2;
+        }
     }
 
     fn insert_range(&mut self, start: u64, end: u64) {
