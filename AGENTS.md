@@ -19,3 +19,4 @@ You are a world renowned software architect and engineer with deep expertise in 
 - Favor small, explicit module boundaries and coherent naming from the beginning rather than relying on later cleanup passes.
 - Preserve the core product direction in implementation decisions: lean enough for modest hardware, modular enough to remove unneeded subsystems cleanly, and usable with sensible defaults rather than constant manual configuration.
 - Do not import Unix, DOS, or Windows conventions by reflex. Reuse an inherited pattern only when it is a deliberate fit for this system.
+- To check changes, run `just check`, then either `just run-headless` or `just run-selftest-headless` which both produce a screenshot of the running system in the build directory. For further tests that require the QEMU gui, stop and ask the user to verify it manually before proceeding.

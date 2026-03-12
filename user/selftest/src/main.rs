@@ -101,6 +101,14 @@ const TESTS: &[TestCase] = &[
         name: "path.invalid-entry-ignored",
         run: test_path_invalid_entry_ignored,
     },
+    TestCase {
+        name: "where.lookup-via-path",
+        run: test_where_lookup_via_path,
+    },
+    TestCase {
+        name: "where.path-missing-fails",
+        run: test_where_path_missing_fails,
+    },
 ];
 
 const ENV_BUFFER_SIZE: usize = 128;
@@ -350,6 +358,28 @@ fn test_path_invalid_entry_ignored() -> Result<(), &'static str> {
     } else {
         set_env("PATH", "/bin")?;
         Err("lash did not ignore invalid PATH entry before valid /bin")
+    }
+}
+
+fn test_where_lookup_via_path() -> Result<(), &'static str> {
+    set_env("PATH", "/bin")?;
+    let status = spawn("/bin/lash", &["-c", "where echo"])?;
+    if status == 0 {
+        Ok(())
+    } else {
+        Err("where failed to resolve echo through PATH")
+    }
+}
+
+fn test_where_path_missing_fails() -> Result<(), &'static str> {
+    clear_env("PATH");
+    let status = spawn("/bin/lash", &["-c", "where echo"])?;
+    if status != 0 {
+        set_env("PATH", "/bin")?;
+        Ok(())
+    } else {
+        set_env("PATH", "/bin")?;
+        Err("where unexpectedly resolved bare command with PATH unset")
     }
 }
 

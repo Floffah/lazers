@@ -14,8 +14,8 @@ use lash::{
     MAX_COMMAND_ARGS,
 };
 use liblazer::{
-    self, print, println, ChdirError, GetEnvError, ListEnvError, SetEnvError,
-    SpawnError, UnsetEnvError,
+    self, print, println, ChdirError, GetEnvError, ListEnvError, ReadFileError,
+    SetEnvError, SpawnError, UnsetEnvError,
 };
 
 const COMMAND_PATH_CAPACITY: usize = LINE_CAPACITY + 1 + 128;
@@ -171,6 +171,8 @@ impl Shell {
                     self.run_set(&tokens)
                 } else if command == "unset" {
                     self.run_unset(&tokens)
+                } else if command == "where" {
+                    self.run_where(&tokens)
                 } else if command == "exit" {
                     liblazer::exit(0);
                 } else if !command.is_empty() {
@@ -312,6 +314,36 @@ impl Shell {
         }
     }
 
+    fn run_where(&mut self, tokens: &TokenizedCommand) -> usize {
+        if tokens.count() != 2 {
+            println!("lash: usage: where NAME");
+            return 1;
+        }
+
+        let name = tokens.token(1).unwrap_or("");
+        if name.starts_with('/') {
+            return self.print_explicit_where(name, name);
+        }
+
+        if name.as_bytes().contains(&b'/') {
+            let mut resolved = [0u8; LINE_CAPACITY];
+            let resolved_path = match self.normalize_command_path(name, &mut resolved) {
+                Ok(path) => path,
+                Err(ResolutionError::InvalidPath) => {
+                    println!("lash: invalid path: {}", name);
+                    return 1;
+                }
+                Err(ResolutionError::ResourceUnavailable) => {
+                    println!("lash: unable to resolve command: resource unavailable");
+                    return 1;
+                }
+            };
+            return self.print_explicit_where(name, resolved_path);
+        }
+
+        self.print_path_matches(name)
+    }
+
     fn run_command(&self, command: &str, tokens: &TokenizedCommand, mode: ExecutionMode) -> usize {
         let mut arguments = [""; MAX_COMMAND_ARGS];
         let mut argument_count = 0usize;
@@ -339,24 +371,252 @@ impl Shell {
 
     fn run_path_command(&self, command: &str, arguments: &[&str], mode: ExecutionMode) -> usize {
         let mut path_buffer = [0u8; PATH_BUFFER_CAPACITY];
-        let path_len = match liblazer::get_env("PATH", &mut path_buffer) {
+        let mut candidate_buffer = [0u8; COMMAND_PATH_CAPACITY];
+        match self.with_path_candidates(
+            command,
+            &mut path_buffer,
+            &mut candidate_buffer,
+            |candidate| match liblazer::spawn_wait(candidate, arguments) {
+                Ok(0) => PathSearchStep::Return(0),
+                Ok(status) => {
+                    if matches!(mode, ExecutionMode::Interactive) {
+                        println!("lash: command exited with status {}", status);
+                        println!();
+                    }
+                    PathSearchStep::Return(status)
+                }
+                Err(SpawnError::FileNotFound) => PathSearchStep::Continue,
+                Err(SpawnError::InvalidPath) => {
+                    println!("lash: invalid path: {}", candidate);
+                    PathSearchStep::Return(1)
+                }
+                Err(SpawnError::InvalidExecutable) => {
+                    println!("lash: invalid executable: {}", candidate);
+                    PathSearchStep::Return(1)
+                }
+                Err(SpawnError::ResourceUnavailable) => {
+                    println!("lash: unable to run command: resource unavailable");
+                    PathSearchStep::Return(1)
+                }
+            },
+        ) {
+            Ok(PathSearchOutcome::Returned(status)) => status,
+            Ok(PathSearchOutcome::Matched) | Ok(PathSearchOutcome::NoMatches) => {
+                self.command_not_found(command);
+                1
+            }
+            Err(ResolutionError::InvalidPath) => {
+                println!("lash: invalid path: {}", command);
+                1
+            }
+            Err(ResolutionError::ResourceUnavailable) => {
+                println!("lash: unable to run command: resource unavailable");
+                1
+            }
+        }
+    }
+
+    fn print_path_matches(&self, command: &str) -> usize {
+        let mut path_buffer = [0u8; PATH_BUFFER_CAPACITY];
+        let mut candidate_buffer = [0u8; COMMAND_PATH_CAPACITY];
+        match self.with_path_candidates(
+            command,
+            &mut path_buffer,
+            &mut candidate_buffer,
+            |candidate| match self.probe_path(candidate) {
+                Ok(true) => {
+                    println!("{}", candidate);
+                    PathSearchStep::Matched
+                }
+                Ok(false) => PathSearchStep::Continue,
+                Err(ResolutionError::InvalidPath) => {
+                    println!("lash: invalid path: {}", candidate);
+                    PathSearchStep::Return(1)
+                }
+                Err(ResolutionError::ResourceUnavailable) => {
+                    println!("lash: unable to resolve command: resource unavailable");
+                    PathSearchStep::Return(1)
+                }
+            },
+        ) {
+            Ok(PathSearchOutcome::Matched) => 0,
+            Ok(PathSearchOutcome::Returned(status)) => status,
+            Ok(PathSearchOutcome::NoMatches) => {
+                self.command_not_found(command);
+                1
+            }
+            Err(ResolutionError::InvalidPath) => {
+                println!("lash: invalid path: {}", command);
+                1
+            }
+            Err(ResolutionError::ResourceUnavailable) => {
+                println!("lash: unable to resolve command: resource unavailable");
+                1
+            }
+        }
+    }
+
+    fn print_explicit_where(&mut self, display_name: &str, path: &str) -> usize {
+        match self.probe_path(path) {
+            Ok(true) => {
+                println!("{}", path);
+                0
+            }
+            Ok(false) => {
+                self.command_not_found(display_name);
+                1
+            }
+            Err(ResolutionError::InvalidPath) => {
+                println!("lash: invalid path: {}", path);
+                1
+            }
+            Err(ResolutionError::ResourceUnavailable) => {
+                println!("lash: unable to resolve command: resource unavailable");
+                1
+            }
+        }
+    }
+
+    fn normalize_command_path<'a>(
+        &mut self,
+        input: &str,
+        output: &'a mut [u8; LINE_CAPACITY],
+    ) -> Result<&'a str, ResolutionError> {
+        let cwd = match liblazer::getcwd(&mut self.cwd) {
+            Ok(len) => core::str::from_utf8(&self.cwd[..len]).unwrap_or("/"),
+            Err(_) => return Err(ResolutionError::ResourceUnavailable),
+        };
+
+        let mut len = if input.starts_with('/') {
+            output[0] = b'/';
+            1
+        } else {
+            let cwd_bytes = cwd.as_bytes();
+            if cwd_bytes.len() > output.len() {
+                return Err(ResolutionError::ResourceUnavailable);
+            }
+            output[..cwd_bytes.len()].copy_from_slice(cwd_bytes);
+            cwd_bytes.len()
+        };
+
+        let bytes = input.as_bytes();
+        let mut index = 0usize;
+        while index <= bytes.len() {
+            while index < bytes.len() && bytes[index] == b'/' {
+                index += 1;
+            }
+            if index >= bytes.len() {
+                break;
+            }
+
+            let start = index;
+            while index < bytes.len() && bytes[index] != b'/' {
+                index += 1;
+            }
+            let segment = &input[start..index];
+
+            if segment == "." {
+                continue;
+            }
+
+            if segment == ".." {
+                if len > 1 {
+                    len -= 1;
+                    while len > 0 && output[len] != b'/' {
+                        len -= 1;
+                    }
+                    if len == 0 {
+                        output[0] = b'/';
+                        len = 1;
+                    }
+                }
+                continue;
+            }
+
+            if len == 0 {
+                output[0] = b'/';
+                len = 1;
+            }
+            if len > 1 && output[len - 1] != b'/' {
+                if len >= output.len() {
+                    return Err(ResolutionError::ResourceUnavailable);
+                }
+                output[len] = b'/';
+                len += 1;
+            }
+
+            let segment_bytes = segment.as_bytes();
+            if len + segment_bytes.len() > output.len() {
+                return Err(ResolutionError::ResourceUnavailable);
+            }
+            output[len..len + segment_bytes.len()].copy_from_slice(segment_bytes);
+            len += segment_bytes.len();
+        }
+
+        if len == 0 {
+            output[0] = b'/';
+            len = 1;
+        }
+
+        core::str::from_utf8(&output[..len]).map_err(|_| ResolutionError::InvalidPath)
+    }
+
+    fn probe_path(&self, path: &str) -> Result<bool, ResolutionError> {
+        let mut probe = [0u8; 1];
+        match liblazer::read_file(path, &mut probe) {
+            Ok(_) => Ok(true),
+            Err(ReadFileError::BufferTooSmall) => Ok(true),
+            Err(ReadFileError::NotFound | ReadFileError::NotAFile) => Ok(false),
+            Err(ReadFileError::InvalidPath) => Err(ResolutionError::InvalidPath),
+            Err(ReadFileError::ResourceUnavailable) => Err(ResolutionError::ResourceUnavailable),
+        }
+    }
+
+    fn load_path<'a>(
+        &self,
+        path_buffer: &'a mut [u8; PATH_BUFFER_CAPACITY],
+    ) -> Option<&'a str> {
+        let path_len = match liblazer::get_env("PATH", path_buffer) {
             Ok(len) => len,
             Err(GetEnvError::InvalidKey | GetEnvError::NotFound | GetEnvError::BufferTooSmall)
-            | Err(GetEnvError::ResourceUnavailable) => {
-                self.command_not_found(command);
-                return 1;
-            }
+            | Err(GetEnvError::ResourceUnavailable) => return None,
         };
 
-        let path = match core::str::from_utf8(&path_buffer[..path_len]) {
-            Ok(path) => path,
-            Err(_) => {
-                self.command_not_found(command);
-                return 1;
-            }
+        core::str::from_utf8(&path_buffer[..path_len]).ok()
+    }
+
+    fn build_path_candidate<'a>(
+        &self,
+        entry: &str,
+        command: &str,
+        candidate_buffer: &'a mut [u8; COMMAND_PATH_CAPACITY],
+    ) -> Result<&'a str, ResolutionError> {
+        let needed = entry.len() + 1 + command.len();
+        if needed > candidate_buffer.len() {
+            return Err(ResolutionError::ResourceUnavailable);
+        }
+
+        candidate_buffer[..entry.len()].copy_from_slice(entry.as_bytes());
+        candidate_buffer[entry.len()] = b'/';
+        candidate_buffer[entry.len() + 1..needed].copy_from_slice(command.as_bytes());
+        core::str::from_utf8(&candidate_buffer[..needed]).map_err(|_| ResolutionError::InvalidPath)
+    }
+
+    fn with_path_candidates<T, F>(
+        &self,
+        command: &str,
+        path_buffer: &mut [u8; PATH_BUFFER_CAPACITY],
+        candidate_buffer: &mut [u8; COMMAND_PATH_CAPACITY],
+        mut visitor: F,
+    ) -> Result<PathSearchOutcome<T>, ResolutionError>
+    where
+        F: FnMut(&str) -> PathSearchStep<T>,
+    {
+        let Some(path) = self.load_path(path_buffer) else {
+            return Ok(PathSearchOutcome::NoMatches);
         };
 
-        let mut candidate_buffer = [0u8; COMMAND_PATH_CAPACITY];
+        let mut matched = false;
         let mut segment_start = 0usize;
         while segment_start <= path.len() {
             let remainder = &path[segment_start..];
@@ -364,40 +624,11 @@ impl Shell {
             let entry = &remainder[..segment_len];
 
             if !entry.is_empty() && entry.starts_with('/') {
-                let needed = entry.len() + 1 + command.len();
-                if needed > candidate_buffer.len() {
-                    println!("lash: unable to run command: resource unavailable");
-                    return 1;
-                }
-
-                candidate_buffer[..entry.len()].copy_from_slice(entry.as_bytes());
-                candidate_buffer[entry.len()] = b'/';
-                candidate_buffer[entry.len() + 1..needed].copy_from_slice(command.as_bytes());
-                let candidate =
-                    core::str::from_utf8(&candidate_buffer[..needed]).unwrap_or(command);
-
-                match liblazer::spawn_wait(candidate, arguments) {
-                    Ok(0) => return 0,
-                    Ok(status) => {
-                        if matches!(mode, ExecutionMode::Interactive) {
-                            println!("lash: command exited with status {}", status);
-                            println!();
-                        }
-                        return status;
-                    }
-                    Err(SpawnError::FileNotFound) => {}
-                    Err(SpawnError::InvalidPath) => {
-                        println!("lash: invalid path: {}", candidate);
-                        return 1;
-                    }
-                    Err(SpawnError::InvalidExecutable) => {
-                        println!("lash: invalid executable: {}", candidate);
-                        return 1;
-                    }
-                    Err(SpawnError::ResourceUnavailable) => {
-                        println!("lash: unable to run command: resource unavailable");
-                        return 1;
-                    }
+                let candidate = self.build_path_candidate(entry, command, candidate_buffer)?;
+                match visitor(candidate) {
+                    PathSearchStep::Continue => {}
+                    PathSearchStep::Matched => matched = true,
+                    PathSearchStep::Return(value) => return Ok(PathSearchOutcome::Returned(value)),
                 }
             }
 
@@ -407,8 +638,11 @@ impl Shell {
             segment_start += segment_len + 1;
         }
 
-        self.command_not_found(command);
-        1
+        if matched {
+            Ok(PathSearchOutcome::Matched)
+        } else {
+            Ok(PathSearchOutcome::NoMatches)
+        }
     }
 
     fn run_command_at_path(
@@ -466,4 +700,22 @@ impl Shell {
 enum ExecutionMode {
     Interactive,
     Batch,
+}
+
+#[derive(Clone, Copy)]
+enum ResolutionError {
+    InvalidPath,
+    ResourceUnavailable,
+}
+
+enum PathSearchStep<T> {
+    Continue,
+    Matched,
+    Return(T),
+}
+
+enum PathSearchOutcome<T> {
+    NoMatches,
+    Matched,
+    Returned(T),
 }

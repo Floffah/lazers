@@ -20,8 +20,8 @@ use crate::thread::{
     UserThreadStart,
 };
 
-const MAX_PROCESSES: usize = 4;
-const MAX_THREADS: usize = 6;
+const MAX_PROCESSES: usize = 8;
+const MAX_THREADS: usize = 12;
 const THREAD_STACK_SIZE: usize = 64 * 1024;
 
 static SCHEDULER: SchedulerCell = SchedulerCell::new();
