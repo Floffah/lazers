@@ -9,28 +9,13 @@
 //! policy, while `kernel_main` wires them together into the first runnable
 //! system state.
 
-#[macro_use]
-mod macros;
-mod arch;
-mod console;
-mod env;
-mod font;
-mod io;
-mod keyboard;
-mod memory;
-mod pci;
-mod process;
-mod scheduler;
-mod storage;
-mod syscall;
-mod terminal;
-mod thread;
-
 use boot_info::{BootInfo, PixelFormat};
 use core::arch::{asm, global_asm};
 #[cfg(not(test))]
 use core::panic::PanicInfo;
-use memory::LoadedUserProgram;
+use kernel::kprintln;
+use kernel::memory::LoadedUserProgram;
+use kernel::{arch, console, halt_forever, keyboard, memory, scheduler, storage, terminal};
 
 global_asm!(include_str!("main.asm"));
 
@@ -110,17 +95,6 @@ fn pixel_format_name(format: PixelFormat) -> &'static str {
         PixelFormat::Rgb => "rgb",
         PixelFormat::Bgr => "bgr",
         PixelFormat::Unknown => "unknown",
-    }
-}
-
-pub(crate) fn halt_forever() -> ! {
-    loop {
-        unsafe {
-            asm!(
-                include_str!("halt_forever.main.asm"),
-                options(nomem, nostack, preserves_flags)
-            );
-        }
     }
 }
 
