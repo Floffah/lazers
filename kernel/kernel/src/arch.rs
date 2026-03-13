@@ -394,10 +394,7 @@ impl TrapFrame {
 const fn code_descriptor(dpl: u8) -> u64 {
     let access = 0x9a | (((dpl as u64) & 0x3) << 5);
     let flags = 0x2;
-    (0xffff)
-        | (access << 40)
-        | (flags << 52)
-        | (0xf << 48)
+    (0xffff) | (access << 40) | (flags << 52) | (0xf << 48)
 }
 
 const fn data_descriptor(dpl: u8) -> u64 {

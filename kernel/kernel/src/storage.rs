@@ -5,8 +5,8 @@
 //! sector access, GPT partition discovery, a narrow FAT32 reader, and a small
 //! root-filesystem interface used by the kernel bootstrap code.
 
-use core::mem::size_of;
 use core::cell::UnsafeCell;
+use core::mem::size_of;
 use core::ptr::{copy_nonoverlapping, read_volatile, write_volatile};
 
 use crate::memory::{self, MemoryError};
@@ -16,8 +16,9 @@ const SECTOR_SIZE: usize = 512;
 const AHCI_MMIO_SIZE: usize = 0x1100;
 const GPT_HEADER_LBA: u64 = 1;
 const GPT_HEADER_SIGNATURE: [u8; 8] = *b"EFI PART";
-const EFI_SYSTEM_PARTITION_GUID: [u8; 16] =
-    [0x28, 0x73, 0x2a, 0xc1, 0x1f, 0xf8, 0xd2, 0x11, 0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e, 0xc9, 0x3b];
+const EFI_SYSTEM_PARTITION_GUID: [u8; 16] = [
+    0x28, 0x73, 0x2a, 0xc1, 0x1f, 0xf8, 0xd2, 0x11, 0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e, 0xc9, 0x3b,
+];
 
 const AHCI_GHC_AE: u32 = 1 << 31;
 const AHCI_PORT_CMD_ST: u32 = 1 << 0;
@@ -62,7 +63,8 @@ impl RootFs {
     /// kernel-owned buffer.
     pub fn read_file(&self, path: &str) -> Result<memory::KernelBuffer, StorageError> {
         let file = self.fs.open_absolute(path)?;
-        let buffer = memory::allocate_kernel_buffer(file.size as usize).map_err(StorageError::Memory)?;
+        let buffer =
+            memory::allocate_kernel_buffer(file.size as usize).map_err(StorageError::Memory)?;
         let mut buffer = buffer;
         let bytes_read = self.fs.read_file(&file, buffer.as_mut_slice())?;
         debug_assert_eq!(bytes_read, buffer.len());
@@ -117,10 +119,14 @@ impl StorageError {
             Self::InvalidPartitionTable => "the GPT partition table is invalid",
             Self::MissingEspPartition => "the EFI system partition is missing",
             Self::MissingSystemPartition => "the LAZERS-SYSTEM partition is missing",
-            Self::InvalidFat32BootSector => "the system partition does not contain a supported FAT32 filesystem",
+            Self::InvalidFat32BootSector => {
+                "the system partition does not contain a supported FAT32 filesystem"
+            }
             Self::InvalidPath => "the requested path is invalid",
             Self::PathNotAbsolute => "the requested path is not absolute",
-            Self::InvalidShortName => "the requested path component is not a supported FAT short name",
+            Self::InvalidShortName => {
+                "the requested path component is not a supported FAT short name"
+            }
             Self::FileNotFound => "the requested file was not found",
             Self::NotAFile => "the requested path does not name a regular file",
             Self::NotADirectory => "the requested path does not name a directory",
@@ -173,21 +179,43 @@ pub fn normalize_path(cwd: &str, path: &str, buffer: &mut [u8]) -> Result<usize,
     buffer[0] = b'/';
 
     if path.starts_with('/') {
-        normalize_path_parts(path, buffer, &mut normalized_len, &mut component_starts, &mut component_count)?;
+        normalize_path_parts(
+            path,
+            buffer,
+            &mut normalized_len,
+            &mut component_starts,
+            &mut component_count,
+        )?;
     } else {
-        normalize_path_parts(cwd, buffer, &mut normalized_len, &mut component_starts, &mut component_count)?;
-        normalize_path_parts(path, buffer, &mut normalized_len, &mut component_starts, &mut component_count)?;
+        normalize_path_parts(
+            cwd,
+            buffer,
+            &mut normalized_len,
+            &mut component_starts,
+            &mut component_count,
+        )?;
+        normalize_path_parts(
+            path,
+            buffer,
+            &mut normalized_len,
+            &mut component_starts,
+            &mut component_count,
+        )?;
     }
 
     Ok(normalized_len)
 }
 
 fn mount_root_fs() -> Result<RootFs, StorageError> {
-    let controller_info = pci::find_ahci_controller().ok_or(StorageError::AhciControllerNotFound)?;
+    let controller_info =
+        pci::find_ahci_controller().ok_or(StorageError::AhciControllerNotFound)?;
     pci::enable_memory_bus_mastering(controller_info.location);
 
     let abar_start = align_down(controller_info.abar, memory::PAGE_SIZE as u64);
-    let abar_end = align_up(controller_info.abar + AHCI_MMIO_SIZE as u64, memory::PAGE_SIZE as u64);
+    let abar_end = align_up(
+        controller_info.abar + AHCI_MMIO_SIZE as u64,
+        memory::PAGE_SIZE as u64,
+    );
     memory::map_kernel_identity_range(abar_start, abar_end, true).map_err(StorageError::Memory)?;
 
     let controller = AhciController::initialize(controller_info.abar)?;
@@ -279,8 +307,13 @@ impl AhciController {
         let ports_implemented = controller.read_hba_reg(|hba| &hba.ports_implemented);
         let mut port_index = 0usize;
         while port_index < 32 {
-            if (ports_implemented & (1 << port_index)) != 0 && controller.port_is_sata_disk(port_index) {
-                let controller = Self { port_index, ..controller };
+            if (ports_implemented & (1 << port_index)) != 0
+                && controller.port_is_sata_disk(port_index)
+            {
+                let controller = Self {
+                    port_index,
+                    ..controller
+                };
                 controller.initialize_port()?;
                 return Ok(controller);
             }
@@ -355,7 +388,11 @@ impl AhciController {
         }
 
         unsafe {
-            copy_nonoverlapping(self.dma_buffer_paddr as *const u8, buffer.as_mut_ptr(), SECTOR_SIZE);
+            copy_nonoverlapping(
+                self.dma_buffer_paddr as *const u8,
+                buffer.as_mut_ptr(),
+                SECTOR_SIZE,
+            );
         }
         Ok(())
     }
@@ -363,13 +400,19 @@ impl AhciController {
     fn initialize_port(&self) -> Result<(), StorageError> {
         self.stop_port()?;
 
-        self.write_port_reg(|port| &mut port.command_list_base, self.command_list_paddr as u32);
+        self.write_port_reg(
+            |port| &mut port.command_list_base,
+            self.command_list_paddr as u32,
+        );
         self.write_port_reg(
             |port| &mut port.command_list_base_upper,
             (self.command_list_paddr >> 32) as u32,
         );
         self.write_port_reg(|port| &mut port.fis_base, self.fis_paddr as u32);
-        self.write_port_reg(|port| &mut port.fis_base_upper, (self.fis_paddr >> 32) as u32);
+        self.write_port_reg(
+            |port| &mut port.fis_base_upper,
+            (self.fis_paddr >> 32) as u32,
+        );
         self.write_port_reg(|port| &mut port.interrupt_enable, 0);
         self.write_port_reg(|port| &mut port.serial_ata_error, u32::MAX);
         self.write_port_reg(|port| &mut port.interrupt_status, u32::MAX);
@@ -658,7 +701,9 @@ impl Fat32 {
     fn open_absolute(&self, path: &str) -> Result<FatDirectoryEntry, StorageError> {
         match self.resolve_absolute(path)? {
             FatResolvedPath::File(entry) => Ok(entry),
-            FatResolvedPath::RootDirectory | FatResolvedPath::Directory(_) => Err(StorageError::NotAFile),
+            FatResolvedPath::RootDirectory | FatResolvedPath::Directory(_) => {
+                Err(StorageError::NotAFile)
+            }
         }
     }
 
@@ -669,7 +714,11 @@ impl Fat32 {
         }
     }
 
-    fn read_file(&self, entry: &FatDirectoryEntry, buffer: &mut [u8]) -> Result<usize, StorageError> {
+    fn read_file(
+        &self,
+        entry: &FatDirectoryEntry,
+        buffer: &mut [u8],
+    ) -> Result<usize, StorageError> {
         if buffer.len() < entry.size as usize {
             return Err(StorageError::BufferTooSmall);
         }
@@ -702,7 +751,11 @@ impl Fat32 {
         Ok(written)
     }
 
-    fn find_in_directory(&self, start_cluster: u32, component: &str) -> Result<FatDirectoryEntry, StorageError> {
+    fn find_in_directory(
+        &self,
+        start_cluster: u32,
+        component: &str,
+    ) -> Result<FatDirectoryEntry, StorageError> {
         let short_name = make_short_name(component)?;
         let mut cluster = start_cluster;
         let mut sector = [0u8; SECTOR_SIZE];
@@ -727,7 +780,9 @@ impl Fat32 {
                     }
 
                     let attributes = entry[11];
-                    if attributes == FAT_ATTRIBUTE_LONG_NAME || (attributes & FAT_ATTRIBUTE_VOLUME_ID) != 0 {
+                    if attributes == FAT_ATTRIBUTE_LONG_NAME
+                        || (attributes & FAT_ATTRIBUTE_VOLUME_ID) != 0
+                    {
                         entry_offset += FAT_DIRECTORY_ENTRY_SIZE;
                         continue;
                     }
@@ -758,7 +813,10 @@ impl Fat32 {
         }
 
         let mut current_cluster = self.root_cluster;
-        let mut components = path.split('/').filter(|component| !component.is_empty()).peekable();
+        let mut components = path
+            .split('/')
+            .filter(|component| !component.is_empty())
+            .peekable();
         let Some(_) = components.peek() else {
             return Ok(FatResolvedPath::RootDirectory);
         };
@@ -813,7 +871,9 @@ impl Fat32 {
                     }
 
                     let attributes = entry[11];
-                    if attributes == FAT_ATTRIBUTE_LONG_NAME || (attributes & FAT_ATTRIBUTE_VOLUME_ID) != 0 {
+                    if attributes == FAT_ATTRIBUTE_LONG_NAME
+                        || (attributes & FAT_ATTRIBUTE_VOLUME_ID) != 0
+                    {
                         entry_offset += FAT_DIRECTORY_ENTRY_SIZE;
                         continue;
                     }
@@ -1058,10 +1118,7 @@ fn display_short_name(entry: &[u8]) -> DisplayShortName {
 }
 
 fn is_dot_entry(name: &DisplayShortName) -> bool {
-    matches!(
-        &name.bytes[..name.len],
-        [b'.'] | [b'.', b'.']
-    )
+    matches!(&name.bytes[..name.len], [b'.'] | [b'.', b'.'])
 }
 
 fn normalize_fat_byte(byte: u8) -> Result<u8, StorageError> {
@@ -1069,9 +1126,8 @@ fn normalize_fat_byte(byte: u8) -> Result<u8, StorageError> {
         Ok(byte.to_ascii_uppercase())
     } else {
         match byte {
-            b'$' | b'%' | b'\'' | b'-' | b'_' | b'@' | b'~' | b'`' | b'!' | b'(' | b')' | b'{' | b'}' | b'^' | b'#' | b'&' => {
-                Ok(byte)
-            }
+            b'$' | b'%' | b'\'' | b'-' | b'_' | b'@' | b'~' | b'`' | b'!' | b'(' | b')' | b'{'
+            | b'}' | b'^' | b'#' | b'&' => Ok(byte),
             _ => Err(StorageError::InvalidShortName),
         }
     }
@@ -1151,7 +1207,8 @@ fn normalize_path_parts(
             *normalized_len += 1;
         }
 
-        buffer[*normalized_len..*normalized_len + component.len()].copy_from_slice(component.as_bytes());
+        buffer[*normalized_len..*normalized_len + component.len()]
+            .copy_from_slice(component.as_bytes());
         *normalized_len += component.len();
         component_starts[*component_count] = previous_len;
         *component_count += 1;

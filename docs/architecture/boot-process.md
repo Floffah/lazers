@@ -45,7 +45,7 @@ That same runtime path is used for the initial user program and for commands lau
 
 ## Current First User Program
 
-The kernel does not hardcode shell behavior, but it does currently choose one initial user program at build time. The default is `/bin/lash`, and alternate bootstrap programs like `/bin/selftest` can be selected for specialized images.
+The kernel does not hardcode shell behavior, but it does currently choose one initial user program at build time. The default is `/system/bin/lash`, and alternate bootstrap programs like `/system/bin/selftest` can be selected for specialized images.
 
 This keeps session policy narrow for now: the kernel launches one first program, and that program owns the higher-level behavior.
 

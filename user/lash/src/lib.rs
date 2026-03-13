@@ -362,7 +362,9 @@ mod tests {
     fn segment_strings(line: &str) -> Vec<String> {
         let scan = scan_segments(line.as_bytes()).unwrap();
         (0..scan.count())
-            .map(|index| String::from_utf8(scan.segment(line.as_bytes(), index).unwrap().to_vec()).unwrap())
+            .map(|index| {
+                String::from_utf8(scan.segment(line.as_bytes(), index).unwrap().to_vec()).unwrap()
+            })
             .collect()
     }
 
@@ -388,10 +390,17 @@ mod tests {
 
     #[test]
     fn scan_segments_tracks_operator_order() {
-        assert_eq!(segment_strings("echo a && echo b || echo c ; echo d"), vec!["echo a", "echo b", "echo c", "echo d"]);
+        assert_eq!(
+            segment_strings("echo a && echo b || echo c ; echo d"),
+            vec!["echo a", "echo b", "echo c", "echo d"]
+        );
         assert_eq!(
             operators("echo a && echo b || echo c ; echo d"),
-            vec![SegmentOperator::And, SegmentOperator::Or, SegmentOperator::Sequence]
+            vec![
+                SegmentOperator::And,
+                SegmentOperator::Or,
+                SegmentOperator::Sequence
+            ]
         );
     }
 
@@ -405,17 +414,38 @@ mod tests {
 
     #[test]
     fn scan_segments_rejects_invalid_syntax() {
-        assert_eq!(scan_segments(b"|| echo").unwrap_err(), ParseError::InvalidSyntax);
-        assert_eq!(scan_segments(b"echo ||").unwrap_err(), ParseError::InvalidSyntax);
-        assert_eq!(scan_segments(b"echo ; ; ls").unwrap_err(), ParseError::InvalidSyntax);
-        assert_eq!(scan_segments(b"echo || && ls").unwrap_err(), ParseError::InvalidSyntax);
+        assert_eq!(
+            scan_segments(b"|| echo").unwrap_err(),
+            ParseError::InvalidSyntax
+        );
+        assert_eq!(
+            scan_segments(b"echo ||").unwrap_err(),
+            ParseError::InvalidSyntax
+        );
+        assert_eq!(
+            scan_segments(b"echo ; ; ls").unwrap_err(),
+            ParseError::InvalidSyntax
+        );
+        assert_eq!(
+            scan_segments(b"echo || && ls").unwrap_err(),
+            ParseError::InvalidSyntax
+        );
     }
 
     #[test]
     fn scan_segments_reports_quote_and_escape_errors() {
-        assert_eq!(scan_segments(b"echo 'oops").unwrap_err(), ParseError::UnmatchedSingleQuote);
-        assert_eq!(scan_segments(b"echo \"oops").unwrap_err(), ParseError::UnmatchedDoubleQuote);
-        assert_eq!(scan_segments(b"echo hello\\").unwrap_err(), ParseError::TrailingBackslash);
+        assert_eq!(
+            scan_segments(b"echo 'oops").unwrap_err(),
+            ParseError::UnmatchedSingleQuote
+        );
+        assert_eq!(
+            scan_segments(b"echo \"oops").unwrap_err(),
+            ParseError::UnmatchedDoubleQuote
+        );
+        assert_eq!(
+            scan_segments(b"echo hello\\").unwrap_err(),
+            ParseError::TrailingBackslash
+        );
     }
 
     #[test]
@@ -427,13 +457,19 @@ mod tests {
             }
             line.push('a');
         }
-        assert_eq!(scan_segments(line.as_bytes()).unwrap_err(), ParseError::ResourceUnavailable);
+        assert_eq!(
+            scan_segments(line.as_bytes()).unwrap_err(),
+            ParseError::ResourceUnavailable
+        );
     }
 
     #[test]
     fn token_parser_splits_and_collapses_spaces() {
         assert_eq!(tokens("echo hello world"), vec!["echo", "hello", "world"]);
-        assert_eq!(tokens("echo   hello   world"), vec!["echo", "hello", "world"]);
+        assert_eq!(
+            tokens("echo   hello   world"),
+            vec!["echo", "hello", "world"]
+        );
     }
 
     #[test]
@@ -457,9 +493,18 @@ mod tests {
 
     #[test]
     fn token_parser_reports_quote_and_escape_errors() {
-        assert_eq!(TokenizedCommand::parse(b"echo 'oops").unwrap_err(), ParseError::UnmatchedSingleQuote);
-        assert_eq!(TokenizedCommand::parse(b"echo \"oops").unwrap_err(), ParseError::UnmatchedDoubleQuote);
-        assert_eq!(TokenizedCommand::parse(b"echo hello\\").unwrap_err(), ParseError::TrailingBackslash);
+        assert_eq!(
+            TokenizedCommand::parse(b"echo 'oops").unwrap_err(),
+            ParseError::UnmatchedSingleQuote
+        );
+        assert_eq!(
+            TokenizedCommand::parse(b"echo \"oops").unwrap_err(),
+            ParseError::UnmatchedDoubleQuote
+        );
+        assert_eq!(
+            TokenizedCommand::parse(b"echo hello\\").unwrap_err(),
+            ParseError::TrailingBackslash
+        );
     }
 
     #[test]

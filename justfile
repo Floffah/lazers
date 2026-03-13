@@ -4,8 +4,8 @@ loader_target := "x86_64-unknown-uefi"
 kernel_target := "x86_64-unknown-none"
 kernel_rustflags := "-C relocation-model=static -C link-arg=-Tkernel/kernel/linker.ld -C link-arg=-no-pie -C link-arg=--build-id=none -C link-arg=-z -C link-arg=max-page-size=0x1000"
 user_rustflags := "-C relocation-model=static -C link-arg=-Tlibs/liblazer/linker.ld -C link-arg=-no-pie -C link-arg=--build-id=none -C link-arg=-z -C link-arg=max-page-size=0x1000"
-default_initial_user_program := "/bin/lash"
-selftest_initial_user_program := "/bin/selftest"
+default_initial_user_program := "/system/bin/lash"
+selftest_initial_user_program := "/system/bin/selftest"
 
 default:
     @just --list

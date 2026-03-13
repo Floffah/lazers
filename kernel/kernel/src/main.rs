@@ -26,17 +26,17 @@ mod syscall;
 mod terminal;
 mod thread;
 
+use boot_info::{BootInfo, PixelFormat};
 use core::arch::{asm, global_asm};
 #[cfg(not(test))]
 use core::panic::PanicInfo;
-use boot_info::{BootInfo, PixelFormat};
 use memory::LoadedUserProgram;
 
 global_asm!(include_str!("main.asm"));
 
 const INITIAL_USER_PROGRAM: &str = match option_env!("LAZERS_INITIAL_USER_PROGRAM") {
     Some(path) => path,
-    None => "/bin/lash",
+    None => "/system/bin/lash",
 };
 
 #[no_mangle]
@@ -89,9 +89,10 @@ pub extern "sysv64" fn kernel_main(boot_info: *const BootInfo) -> ! {
         terminal_endpoint: Some(endpoint),
         owned_pages: user_program.owned_pages,
     });
-    scheduler::set_process_env(user_process, "PATH", "/bin")
+    scheduler::set_process_env(user_process, "PATH", "/system/bin:/bin")
         .unwrap_or_else(|_| panic!("failed to seed bootstrap environment"));
-    let _terminal_thread = scheduler::create_kernel_thread("terminal", kernel_process, terminal_thread_entry);
+    let _terminal_thread =
+        scheduler::create_kernel_thread("terminal", kernel_process, terminal_thread_entry);
     kprintln!();
     let _user_thread = scheduler::create_user_thread(
         "user-bootstrap-main",

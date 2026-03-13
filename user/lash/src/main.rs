@@ -10,12 +10,11 @@
 //! kernel or `liblazer`.
 
 use lash::{
-    scan_segments, ParseError, SegmentOperator, TokenizedCommand, LINE_CAPACITY,
-    MAX_COMMAND_ARGS,
+    scan_segments, ParseError, SegmentOperator, TokenizedCommand, LINE_CAPACITY, MAX_COMMAND_ARGS,
 };
 use liblazer::{
-    self, print, println, ChdirError, GetEnvError, ListEnvError, ReadFileError,
-    SetEnvError, SpawnError, UnsetEnvError,
+    self, print, println, ChdirError, GetEnvError, ListEnvError, ReadFileError, SetEnvError,
+    SpawnError, UnsetEnvError,
 };
 
 const COMMAND_PATH_CAPACITY: usize = LINE_CAPACITY + 1 + 128;
@@ -197,7 +196,11 @@ impl Shell {
     }
 
     fn run_cd(&mut self, tokens: &TokenizedCommand) -> usize {
-        let path = if tokens.count() > 1 { tokens.token(1).unwrap_or("/") } else { "/" };
+        let path = if tokens.count() > 1 {
+            tokens.token(1).unwrap_or("/")
+        } else {
+            "/"
+        };
 
         match liblazer::chdir(path) {
             Ok(()) => 0,
@@ -572,10 +575,7 @@ impl Shell {
         }
     }
 
-    fn load_path<'a>(
-        &self,
-        path_buffer: &'a mut [u8; PATH_BUFFER_CAPACITY],
-    ) -> Option<&'a str> {
+    fn load_path<'a>(&self, path_buffer: &'a mut [u8; PATH_BUFFER_CAPACITY]) -> Option<&'a str> {
         let path_len = match liblazer::get_env("PATH", path_buffer) {
             Ok(len) => len,
             Err(GetEnvError::InvalidKey | GetEnvError::NotFound | GetEnvError::BufferTooSmall)

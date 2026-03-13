@@ -201,8 +201,8 @@ mod tests {
     #[test]
     fn insert_and_lookup_variable() {
         let mut env = Environment::new();
-        env.set("SHELL", "/bin/lash").unwrap();
-        assert_eq!(env.get("SHELL"), Ok(Some("/bin/lash")));
+        env.set("SHELL", "/system/bin/lash").unwrap();
+        assert_eq!(env.get("SHELL"), Ok(Some("/system/bin/lash")));
     }
 
     #[test]
@@ -256,14 +256,14 @@ mod tests {
         let mut parent = Environment::new();
         let mut child = Environment::new();
         parent.set("USER", "root").unwrap();
-        parent.set("SHELL", "/bin/lash").unwrap();
+        parent.set("SHELL", "/system/bin/lash").unwrap();
 
         parent.inherit_into(&mut child).unwrap();
         child.set("USER", "guest").unwrap();
         child.remove("SHELL").unwrap();
 
         assert_eq!(parent.get("USER"), Ok(Some("root")));
-        assert_eq!(parent.get("SHELL"), Ok(Some("/bin/lash")));
+        assert_eq!(parent.get("SHELL"), Ok(Some("/system/bin/lash")));
         assert_eq!(child.get("USER"), Ok(Some("guest")));
         assert_eq!(child.get("SHELL"), Ok(None));
     }

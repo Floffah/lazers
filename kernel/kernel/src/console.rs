@@ -257,7 +257,8 @@ impl FramebufferConsole {
         self.clear_glyph_area(origin_x, origin_y);
         self.draw_glyph(origin_x, origin_y, glyph_for(byte));
         self.cursor_column += 1;
-        self.row_lengths[self.cursor_row] = self.row_lengths[self.cursor_row].max(self.cursor_column);
+        self.row_lengths[self.cursor_row] =
+            self.row_lengths[self.cursor_row].max(self.cursor_column);
     }
 
     fn clear_glyph_area(&mut self, origin_x: usize, origin_y: usize) {

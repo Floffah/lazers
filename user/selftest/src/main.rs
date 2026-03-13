@@ -30,8 +30,8 @@ const TESTS: &[TestCase] = &[
         run: test_cwd_initial_root,
     },
     TestCase {
-        name: "cwd.chdir-bin",
-        run: test_cwd_chdir_bin,
+        name: "cwd.chdir-system-bin",
+        run: test_cwd_chdir_system_bin,
     },
     TestCase {
         name: "cwd.chdir-parent",
@@ -90,6 +90,10 @@ const TESTS: &[TestCase] = &[
         run: test_env_listing_after_unset,
     },
     TestCase {
+        name: "path.seeded-default",
+        run: test_path_seeded_default,
+    },
+    TestCase {
         name: "path.lookup-via-env",
         run: test_path_lookup_via_env,
     },
@@ -114,6 +118,9 @@ const TESTS: &[TestCase] = &[
 const ENV_BUFFER_SIZE: usize = 128;
 const ENV_LIST_BUFFER_SIZE: usize = 512;
 const SELFTEST_ENV_KEY: &str = "SELFTEST_KEY";
+const SYSTEM_BIN_DIR: &str = "/system/bin";
+const LASH_PATH: &str = "/system/bin/lash";
+const DEFAULT_PATH: &str = "/system/bin:/bin";
 
 fn main() -> ! {
     let mut passed = 0usize;
@@ -159,19 +166,19 @@ fn test_cwd_initial_root() -> Result<(), &'static str> {
     assert_cwd("/")
 }
 
-fn test_cwd_chdir_bin() -> Result<(), &'static str> {
-    change_dir("/bin")?;
-    assert_cwd("/bin")
+fn test_cwd_chdir_system_bin() -> Result<(), &'static str> {
+    change_dir(SYSTEM_BIN_DIR)?;
+    assert_cwd(SYSTEM_BIN_DIR)
 }
 
 fn test_cwd_chdir_parent() -> Result<(), &'static str> {
-    change_dir("/bin")?;
+    change_dir(SYSTEM_BIN_DIR)?;
     change_dir("..")?;
-    assert_cwd("/")
+    assert_cwd("/system")
 }
 
 fn test_spawn_echo_zero() -> Result<(), &'static str> {
-    let status = spawn_silent("/bin/echo", &["selftest"])?;
+    let status = spawn_silent("/system/bin/echo", &["selftest"])?;
     if status == 0 {
         Ok(())
     } else {
@@ -180,7 +187,7 @@ fn test_spawn_echo_zero() -> Result<(), &'static str> {
 }
 
 fn test_spawn_ls_zero() -> Result<(), &'static str> {
-    let status = spawn_silent("/bin/ls", &[])?;
+    let status = spawn_silent("/system/bin/ls", &[])?;
     if status == 0 {
         Ok(())
     } else {
@@ -189,7 +196,7 @@ fn test_spawn_ls_zero() -> Result<(), &'static str> {
 }
 
 fn test_spawn_cat_missing_fails() -> Result<(), &'static str> {
-    let status = spawn_silent("/bin/cat", &["/no-such-file"])?;
+    let status = spawn_silent("/system/bin/cat", &["/no-such-file"])?;
     if status != 0 {
         Ok(())
     } else {
@@ -198,17 +205,19 @@ fn test_spawn_cat_missing_fails() -> Result<(), &'static str> {
 }
 
 fn test_spawn_invalid_path_fails() -> Result<(), &'static str> {
-    match liblazer::spawn_wait("/bin/nope", &[]) {
+    match liblazer::spawn_wait("/system/bin/nope", &[]) {
         Err(SpawnError::FileNotFound) => Ok(()),
         Err(SpawnError::InvalidPath) => Err("missing executable reported invalid path"),
         Err(SpawnError::InvalidExecutable) => Err("missing executable reported invalid executable"),
-        Err(SpawnError::ResourceUnavailable) => Err("missing executable reported resource unavailable"),
+        Err(SpawnError::ResourceUnavailable) => {
+            Err("missing executable reported resource unavailable")
+        }
         Ok(_) => Err("missing executable unexpectedly launched"),
     }
 }
 
 fn test_spawn_relative_cwd() -> Result<(), &'static str> {
-    change_dir("/bin")?;
+    change_dir(SYSTEM_BIN_DIR)?;
     let status = spawn_silent("./echo", &["selftest"])?;
     if status == 0 {
         Ok(())
@@ -243,7 +252,9 @@ fn test_env_unset() -> Result<(), &'static str> {
         Ok(_) => Err("unset variable still existed"),
         Err(GetEnvError::InvalidKey) => Err("unset variable lookup reported invalid key"),
         Err(GetEnvError::BufferTooSmall) => Err("unset variable lookup reported buffer too small"),
-        Err(GetEnvError::ResourceUnavailable) => Err("unset variable lookup reported resource unavailable"),
+        Err(GetEnvError::ResourceUnavailable) => {
+            Err("unset variable lookup reported resource unavailable")
+        }
     }
 }
 
@@ -254,7 +265,9 @@ fn test_env_not_found() -> Result<(), &'static str> {
         Ok(_) => Err("missing variable unexpectedly existed"),
         Err(GetEnvError::InvalidKey) => Err("missing variable reported invalid key"),
         Err(GetEnvError::BufferTooSmall) => Err("missing variable reported buffer too small"),
-        Err(GetEnvError::ResourceUnavailable) => Err("missing variable reported resource unavailable"),
+        Err(GetEnvError::ResourceUnavailable) => {
+            Err("missing variable reported resource unavailable")
+        }
     }
 }
 
@@ -297,7 +310,9 @@ fn test_env_invalid_key() -> Result<(), &'static str> {
         Err(SetEnvError::KeyTooLong) => Err("invalid env key reported key too long"),
         Err(SetEnvError::ValueTooLong) => Err("invalid env key reported value too long"),
         Err(SetEnvError::CapacityExceeded) => Err("invalid env key reported capacity exceeded"),
-        Err(SetEnvError::ResourceUnavailable) => Err("invalid env key reported resource unavailable"),
+        Err(SetEnvError::ResourceUnavailable) => {
+            Err("invalid env key reported resource unavailable")
+        }
     }
 }
 
@@ -325,60 +340,66 @@ fn test_env_listing_after_unset() -> Result<(), &'static str> {
     }
 }
 
+fn test_path_seeded_default() -> Result<(), &'static str> {
+    assert_env("PATH", DEFAULT_PATH)
+}
+
 fn test_path_lookup_via_env() -> Result<(), &'static str> {
-    set_env("PATH", "/bin")?;
-    let status = spawn_silent("/bin/lash", &["-c", "echo"])?;
+    set_env("PATH", SYSTEM_BIN_DIR)?;
+    let status = spawn_silent(LASH_PATH, &["-c", "echo"])?;
     if status == 0 {
-        set_env("PATH", "/bin")?;
+        restore_default_path()?;
         Ok(())
     } else {
-        set_env("PATH", "/bin")?;
+        restore_default_path()?;
         Err("lash failed to resolve echo through PATH")
     }
 }
 
 fn test_path_missing_fails() -> Result<(), &'static str> {
     clear_env("PATH");
-    let status = spawn_silent("/bin/lash", &["-c", "echo"])?;
+    let status = spawn_silent(LASH_PATH, &["-c", "echo"])?;
     if status != 0 {
-        set_env("PATH", "/bin")?;
+        restore_default_path()?;
         Ok(())
     } else {
-        set_env("PATH", "/bin")?;
+        restore_default_path()?;
         Err("lash unexpectedly resolved bare command with PATH unset")
     }
 }
 
 fn test_path_invalid_entry_ignored() -> Result<(), &'static str> {
-    set_env("PATH", "bin:/bin")?;
-    let status = spawn_silent("/bin/lash", &["-c", "echo"])?;
+    set_env("PATH", "bin:/system/bin")?;
+    let status = spawn_silent(LASH_PATH, &["-c", "echo"])?;
     if status == 0 {
-        set_env("PATH", "/bin")?;
+        restore_default_path()?;
         Ok(())
     } else {
-        set_env("PATH", "/bin")?;
-        Err("lash did not ignore invalid PATH entry before valid /bin")
+        restore_default_path()?;
+        Err("lash did not ignore invalid PATH entry before valid /system/bin")
     }
 }
 
 fn test_where_lookup_via_path() -> Result<(), &'static str> {
-    set_env("PATH", "/bin")?;
-    let status = spawn_silent("/bin/lash", &["-c", "where echo"])?;
+    set_env("PATH", DEFAULT_PATH)?;
+    let status = spawn_silent(LASH_PATH, &["-c", "where echo"])?;
     if status == 0 {
+        restore_default_path()?;
         Ok(())
     } else {
+        restore_default_path()?;
         Err("where failed to resolve echo through PATH")
     }
 }
 
 fn test_where_path_missing_fails() -> Result<(), &'static str> {
     clear_env("PATH");
-    let status = spawn_silent("/bin/lash", &["-c", "where echo"])?;
+    let status = spawn_silent(LASH_PATH, &["-c", "where echo"])?;
     if status != 0 {
-        set_env("PATH", "/bin")?;
+        restore_default_path()?;
         Ok(())
     } else {
-        set_env("PATH", "/bin")?;
+        restore_default_path()?;
         Err("where unexpectedly resolved bare command with PATH unset")
     }
 }
@@ -433,6 +454,10 @@ fn set_env(key: &str, value: &str) -> Result<(), &'static str> {
     }
 }
 
+fn restore_default_path() -> Result<(), &'static str> {
+    set_env("PATH", DEFAULT_PATH)
+}
+
 fn unset_env(key: &str) -> Result<(), &'static str> {
     match liblazer::unset_env(key) {
         Ok(()) => Ok(()),
@@ -451,7 +476,9 @@ fn env_listing_contains(needle: &str) -> Result<bool, &'static str> {
     let len = match liblazer::list_env(&mut buffer) {
         Ok(len) => len,
         Err(ListEnvError::BufferTooSmall) => return Err("list_env buffer too small"),
-        Err(ListEnvError::ResourceUnavailable) => return Err("list_env reported resource unavailable"),
+        Err(ListEnvError::ResourceUnavailable) => {
+            return Err("list_env reported resource unavailable")
+        }
     };
     let text = str::from_utf8(&buffer[..len]).map_err(|_| "env listing was not valid utf-8")?;
     Ok(text.contains(needle))
@@ -464,7 +491,9 @@ fn assert_env(key: &str, expected: &str) -> Result<(), &'static str> {
         Err(GetEnvError::InvalidKey) => return Err("get_env reported invalid key"),
         Err(GetEnvError::NotFound) => return Err("expected variable was missing"),
         Err(GetEnvError::BufferTooSmall) => return Err("get_env buffer too small"),
-        Err(GetEnvError::ResourceUnavailable) => return Err("get_env reported resource unavailable"),
+        Err(GetEnvError::ResourceUnavailable) => {
+            return Err("get_env reported resource unavailable")
+        }
     };
     let value = str::from_utf8(&buffer[..len]).map_err(|_| "env value was not valid utf-8")?;
     if value == expected {

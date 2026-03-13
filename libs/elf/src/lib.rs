@@ -60,8 +60,12 @@ impl<'a> Iterator for ProgramHeaderIter<'a> {
         let index = self.next as usize;
         self.next += 1;
 
-        let offset = self.table_offset.checked_add(index.checked_mul(self.entry_size)?)?;
-        let bytes = self.bytes.get(offset..offset.checked_add(self.entry_size)?)?;
+        let offset = self
+            .table_offset
+            .checked_add(index.checked_mul(self.entry_size)?)?;
+        let bytes = self
+            .bytes
+            .get(offset..offset.checked_add(self.entry_size)?)?;
         Some(ProgramHeader::parse(bytes))
     }
 }

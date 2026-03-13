@@ -93,9 +93,9 @@ mkdir -p "$ESP_MOUNT_POINT/EFI/BOOT" "$ESP_MOUNT_POINT/lazers"
 cp "$LOADER_PATH" "$ESP_MOUNT_POINT/EFI/BOOT/BOOTX64.EFI"
 cp "$KERNEL_PATH" "$ESP_MOUNT_POINT/lazers/kernel.elf"
 
-mkdir -p "$SYSTEM_MOUNT_POINT/BIN"
+mkdir -p "$SYSTEM_MOUNT_POINT/SYSTEM/BIN"
 for package in "${USER_PACKAGES[@]}"; do
-  cp "$ROOT_DIR/build/$package" "$SYSTEM_MOUNT_POINT/BIN/${package^^}"
+  cp "$ROOT_DIR/build/$package" "$SYSTEM_MOUNT_POINT/SYSTEM/BIN/${package^^}"
 done
 sync
 diskutil unmount "$ESP_PARTITION" >/dev/null

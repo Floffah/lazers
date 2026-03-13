@@ -16,8 +16,7 @@ use crate::process::{Process, ProcessId};
 use crate::storage;
 use crate::terminal::TerminalEndpoint;
 use crate::thread::{
-    KernelThreadEntry, Thread, ThreadContext, ThreadId, ThreadStart, ThreadState,
-    UserThreadStart,
+    KernelThreadEntry, Thread, ThreadContext, ThreadId, ThreadStart, ThreadState, UserThreadStart,
 };
 
 const MAX_PROCESSES: usize = 8;
@@ -116,13 +115,13 @@ pub fn create_user_thread(
     with_scheduler_mut(|scheduler| {
         scheduler
             .try_create_thread(
-            name,
-            process_id,
-            ThreadStart::User(UserThreadStart {
-                entry_point,
-                user_stack_top,
-            }),
-        )
+                name,
+                process_id,
+                ThreadStart::User(UserThreadStart {
+                    entry_point,
+                    user_stack_top,
+                }),
+            )
             .expect("thread capacity exhausted")
     })
 }
@@ -165,8 +164,8 @@ fn spawn_user_process_and_wait_with_stdio(
         )
     })
     .map_err(map_storage_spawn_error)?;
-    let normalized_path =
-        core::str::from_utf8(&normalized_path[..normalized_path_len]).map_err(|_| SpawnError::InvalidPath)?;
+    let normalized_path = core::str::from_utf8(&normalized_path[..normalized_path_len])
+        .map_err(|_| SpawnError::InvalidPath)?;
 
     let file = match storage::read_root_file(normalized_path) {
         Ok(file) => file,
@@ -222,7 +221,9 @@ pub fn start() -> ! {
         };
 
         scheduler.current_thread = Some(thread_id);
-        scheduler.thread_mut(thread_id).set_state(ThreadState::Running);
+        scheduler
+            .thread_mut(thread_id)
+            .set_state(ThreadState::Running);
         scheduler.activation(thread_id)
     });
 
@@ -381,14 +382,16 @@ pub fn current_process_unset_env(key: &str) -> Result<(), EnvironmentAccessError
 /// Resolves and installs a new cwd for the current process.
 pub fn current_process_chdir(path: &str) -> Result<(), storage::StorageError> {
     with_scheduler_mut(|scheduler| {
-        let current = scheduler.current_thread.ok_or(storage::StorageError::RootFsUnavailable)?;
+        let current = scheduler
+            .current_thread
+            .ok_or(storage::StorageError::RootFsUnavailable)?;
         let process_id = scheduler.thread(current).process_id();
         let current_cwd = scheduler.process(process_id).cwd();
 
         let mut normalized = [0u8; crate::process::MAX_CWD_LEN];
         let normalized_len = storage::normalize_path(current_cwd, path, &mut normalized)?;
-        let normalized_path =
-            core::str::from_utf8(&normalized[..normalized_len]).map_err(|_| storage::StorageError::InvalidPath)?;
+        let normalized_path = core::str::from_utf8(&normalized[..normalized_len])
+            .map_err(|_| storage::StorageError::InvalidPath)?;
 
         storage::ensure_root_dir(normalized_path)?;
         scheduler
@@ -399,31 +402,41 @@ pub fn current_process_chdir(path: &str) -> Result<(), storage::StorageError> {
 }
 
 /// Reads one runtime path file from the current process' cwd context.
-pub fn current_process_read_file(path: &str, buffer: &mut [u8]) -> Result<usize, storage::StorageError> {
+pub fn current_process_read_file(
+    path: &str,
+    buffer: &mut [u8],
+) -> Result<usize, storage::StorageError> {
     with_scheduler(|scheduler| {
-        let current = scheduler.current_thread.ok_or(storage::StorageError::RootFsUnavailable)?;
+        let current = scheduler
+            .current_thread
+            .ok_or(storage::StorageError::RootFsUnavailable)?;
         let process_id = scheduler.thread(current).process_id();
         let current_cwd = scheduler.process(process_id).cwd();
 
         let mut normalized = [0u8; crate::process::MAX_CWD_LEN];
         let normalized_len = storage::normalize_path(current_cwd, path, &mut normalized)?;
-        let normalized_path =
-            core::str::from_utf8(&normalized[..normalized_len]).map_err(|_| storage::StorageError::InvalidPath)?;
+        let normalized_path = core::str::from_utf8(&normalized[..normalized_len])
+            .map_err(|_| storage::StorageError::InvalidPath)?;
         storage::read_root_file_into(normalized_path, buffer)
     })
 }
 
 /// Lists one runtime path directory from the current process' cwd context.
-pub fn current_process_read_dir(path: &str, buffer: &mut [u8]) -> Result<usize, storage::StorageError> {
+pub fn current_process_read_dir(
+    path: &str,
+    buffer: &mut [u8],
+) -> Result<usize, storage::StorageError> {
     with_scheduler(|scheduler| {
-        let current = scheduler.current_thread.ok_or(storage::StorageError::RootFsUnavailable)?;
+        let current = scheduler
+            .current_thread
+            .ok_or(storage::StorageError::RootFsUnavailable)?;
         let process_id = scheduler.thread(current).process_id();
         let current_cwd = scheduler.process(process_id).cwd();
 
         let mut normalized = [0u8; crate::process::MAX_CWD_LEN];
         let normalized_len = storage::normalize_path(current_cwd, path, &mut normalized)?;
-        let normalized_path =
-            core::str::from_utf8(&normalized[..normalized_len]).map_err(|_| storage::StorageError::InvalidPath)?;
+        let normalized_path = core::str::from_utf8(&normalized[..normalized_len])
+            .map_err(|_| storage::StorageError::InvalidPath)?;
         storage::read_root_dir(normalized_path, buffer)
     })
 }
@@ -522,15 +535,17 @@ impl SchedulerState {
             .iter()
             .position(|process| process.is_none())?;
         let process_id = ProcessId(slot);
-        let mut process = Process::new(process_id, config.name, config.address_space, config.owned_pages);
+        let mut process = Process::new(
+            process_id,
+            config.name,
+            config.address_space,
+            config.owned_pages,
+        );
 
         if let Some(endpoint) = config.terminal_endpoint {
-            let stdin = process
-                .install_handle(KernelObject::TerminalEndpoint(endpoint))?;
-            let stdout = process
-                .install_handle(KernelObject::TerminalEndpoint(endpoint))?;
-            let stderr = process
-                .install_handle(KernelObject::TerminalEndpoint(endpoint))?;
+            let stdin = process.install_handle(KernelObject::TerminalEndpoint(endpoint))?;
+            let stdout = process.install_handle(KernelObject::TerminalEndpoint(endpoint))?;
+            let stderr = process.install_handle(KernelObject::TerminalEndpoint(endpoint))?;
             process.set_stdio(StdioHandles::new(stdin, stdout, stderr));
         }
 
@@ -544,10 +559,7 @@ impl SchedulerState {
         process_id: ProcessId,
         start: ThreadStart,
     ) -> Option<ThreadId> {
-        let slot = self
-            .threads
-            .iter()
-            .position(|thread| thread.is_none())?;
+        let slot = self.threads.iter().position(|thread| thread.is_none())?;
         let thread_id = ThreadId(slot);
         let (context, kernel_stack_top) = self.initial_context_for(slot);
         self.threads[slot] = Some(Thread::new(
@@ -589,7 +601,8 @@ impl SchedulerState {
             self.process(parent_process_id)
                 .inherit_stdio_silent_into(&mut child)
         } else {
-            self.process(parent_process_id).inherit_stdio_into(&mut child)
+            self.process(parent_process_id)
+                .inherit_stdio_into(&mut child)
         };
 
         if inherited_stdio.is_none() {
@@ -601,7 +614,11 @@ impl SchedulerState {
             });
         }
 
-        if self.process(parent_process_id).inherit_cwd_into(&mut child).is_none() {
+        if self
+            .process(parent_process_id)
+            .inherit_cwd_into(&mut child)
+            .is_none()
+        {
             return Err(LoadedUserProgram {
                 address_space: child.address_space(),
                 entry_point,
@@ -610,7 +627,11 @@ impl SchedulerState {
             });
         }
 
-        if self.process(parent_process_id).inherit_env_into(&mut child).is_err() {
+        if self
+            .process(parent_process_id)
+            .inherit_env_into(&mut child)
+            .is_err()
+        {
             return Err(LoadedUserProgram {
                 address_space: child.address_space(),
                 entry_point,
@@ -873,7 +894,9 @@ fn map_storage_spawn_error(error: storage::StorageError) -> SpawnError {
         storage::StorageError::InvalidPath
         | storage::StorageError::PathNotAbsolute
         | storage::StorageError::InvalidShortName => SpawnError::InvalidPath,
-        storage::StorageError::FileNotFound | storage::StorageError::NotAFile => SpawnError::FileNotFound,
+        storage::StorageError::FileNotFound | storage::StorageError::NotAFile => {
+            SpawnError::FileNotFound
+        }
         _ => SpawnError::ResourceUnavailable,
     }
 }

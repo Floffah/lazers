@@ -133,7 +133,9 @@ fn load_kernel_segments(elf: &ElfImage<'_>, kernel_bytes: &[u8]) -> Result<(), B
             continue;
         }
 
-        let load_address = program_header.load_address().map_err(BootFailure::from_elf)?;
+        let load_address = program_header
+            .load_address()
+            .map_err(BootFailure::from_elf)?;
         let file_range = program_header
             .file_range(kernel_bytes.len())
             .map_err(BootFailure::from_elf)?;
@@ -160,8 +162,8 @@ fn load_kernel_segments(elf: &ElfImage<'_>, kernel_bytes: &[u8]) -> Result<(), B
             write_bytes(segment_base.as_ptr(), 0, page_count * PAGE_SIZE);
         }
 
-        let copy_length = usize::try_from(program_header.file_size)
-            .map_err(|_| BootFailure::AddressOverflow)?;
+        let copy_length =
+            usize::try_from(program_header.file_size).map_err(|_| BootFailure::AddressOverflow)?;
         let copy_end = load_address
             .checked_add(program_header.file_size)
             .ok_or(BootFailure::AddressOverflow)?;
@@ -278,12 +280,18 @@ impl BootFailure {
             Self::FilesystemReadFailed => "failed to read kernel image",
             Self::InvalidElf => "kernel image is not a supported ELF64 executable",
             Self::GraphicsOutputUnavailable => "graphics output protocol is unavailable",
-            Self::UnsupportedPixelFormat => "graphics mode does not expose a direct RGB or BGR framebuffer",
+            Self::UnsupportedPixelFormat => {
+                "graphics mode does not expose a direct RGB or BGR framebuffer"
+            }
             Self::InvalidFramebuffer => "graphics framebuffer information was invalid",
             Self::KernelSegmentAllocationFailed => "failed to allocate memory for a kernel segment",
             Self::KernelStackAllocationFailed => "failed to allocate the initial kernel stack",
-            Self::MemoryMapCapacityExceeded => "normalized memory map exceeded the preallocated buffer",
-            Self::SegmentFileLargerThanMemory => "kernel segment file size exceeded its in-memory size",
+            Self::MemoryMapCapacityExceeded => {
+                "normalized memory map exceeded the preallocated buffer"
+            }
+            Self::SegmentFileLargerThanMemory => {
+                "kernel segment file size exceeded its in-memory size"
+            }
             Self::AddressOverflow => "kernel image contained addresses that overflowed the loader",
         }
     }

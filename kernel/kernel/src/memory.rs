@@ -151,13 +151,19 @@ impl MemoryError {
             Self::AddressSpaceUninitialized => "kernel address space is not initialized",
             Self::AllocatorExhausted => "physical page allocator is exhausted",
             Self::InvalidKernelBufferSize => "kernel buffer size is invalid",
-            Self::SharedKernelMappingCapacityExceeded => "shared kernel mapping capacity is exhausted",
+            Self::SharedKernelMappingCapacityExceeded => {
+                "shared kernel mapping capacity is exhausted"
+            }
             Self::Elf(error) => elf_error_as_str(error),
             Self::UserImageOutOfRange => "user image falls outside the fixed user layout",
             Self::InvalidStartupArguments => "user startup arguments are invalid",
-            Self::StartupArgumentsTooLarge => "user startup arguments do not fit in the fixed stack",
+            Self::StartupArgumentsTooLarge => {
+                "user startup arguments do not fit in the fixed stack"
+            }
             Self::SegmentOverlapCapacityExceeded => "user image mapping capacity is exhausted",
-            Self::OwnedPageCapacityExceeded => "user image ownership tracking capacity is exhausted",
+            Self::OwnedPageCapacityExceeded => {
+                "user image ownership tracking capacity is exhausted"
+            }
         }
     }
 }
@@ -181,8 +187,10 @@ pub fn init(boot_info: &BootInfo) -> Result<(), MemoryError> {
         )?;
 
         let framebuffer_start = align_down(boot_info.framebuffer.base as u64, PAGE_SIZE as u64);
-        let framebuffer_end =
-            align_up(boot_info.framebuffer.base as u64 + boot_info.framebuffer.size as u64, PAGE_SIZE as u64);
+        let framebuffer_end = align_up(
+            boot_info.framebuffer.base as u64 + boot_info.framebuffer.size as u64,
+            PAGE_SIZE as u64,
+        );
         if framebuffer_start < PHYS_WINDOW_START || framebuffer_end > state.phys_window_end {
             builder.map_identity_4k_range(
                 framebuffer_start,
@@ -257,7 +265,10 @@ pub fn map_kernel_identity_range(start: u64, end: u64, writable: bool) -> Result
 /// The loader reuses the shared ELF parser but owns the paging policy: loadable
 /// segments must fit inside the fixed user image range, and a fixed user stack
 /// is appended above them.
-pub fn load_user_program(bytes: &[u8], startup: &ProgramStartup<'_>) -> Result<LoadedUserProgram, MemoryError> {
+pub fn load_user_program(
+    bytes: &[u8],
+    startup: &ProgramStartup<'_>,
+) -> Result<LoadedUserProgram, MemoryError> {
     let elf = ElfImage::parse(bytes).map_err(MemoryError::Elf)?;
     let entry_point = elf.entry_point();
     if !contains_user_address(entry_point) {
@@ -332,9 +343,7 @@ pub fn load_user_program(bytes: &[u8], startup: &ProgramStartup<'_>) -> Result<L
                     virt += PAGE_SIZE as u64;
                 }
 
-                let file_range = header
-                    .file_range(bytes.len())
-                    .map_err(MemoryError::Elf)?;
+                let file_range = header.file_range(bytes.len()).map_err(MemoryError::Elf)?;
                 pages.copy_into(header.virtual_address, &bytes[file_range])?;
             }
 
@@ -378,7 +387,9 @@ pub fn validate_user_buffer(address: u64, len: usize) -> bool {
     };
 
     let user_stack_base = USER_STACK_TOP - ((USER_STACK_PAGES as u64) * (PAGE_SIZE as u64));
-    address >= USER_IMAGE_BASE && end <= USER_STACK_TOP && !(end > user_stack_base && address < user_stack_base)
+    address >= USER_IMAGE_BASE
+        && end <= USER_STACK_TOP
+        && !(end > user_stack_base && address < user_stack_base)
 }
 
 /// Borrows an immutable slice from a validated user virtual address range.
@@ -416,7 +427,10 @@ fn write_startup_arguments(
     let mut argc = 1usize;
     let mut cursor = 0usize;
     while cursor < startup.argv_tail.len() {
-        let Some(relative_end) = startup.argv_tail[cursor..].iter().position(|byte| *byte == 0) else {
+        let Some(relative_end) = startup.argv_tail[cursor..]
+            .iter()
+            .position(|byte| *byte == 0)
+        else {
             return Err(MemoryError::InvalidStartupArguments);
         };
         let end = cursor + relative_end;
@@ -482,7 +496,10 @@ fn write_startup_arguments(
             (argc + 1) * core::mem::size_of::<u64>(),
         )
     };
-    pages.copy_into(stack_start + core::mem::size_of::<u64>() as u64, argv_pointer_bytes)?;
+    pages.copy_into(
+        stack_start + core::mem::size_of::<u64>() as u64,
+        argv_pointer_bytes,
+    )?;
 
     Ok(stack_start)
 }
@@ -573,14 +590,8 @@ impl MemoryState {
             return Err(MemoryError::NoUsableMemory);
         }
 
-        let kernel_start = align_down(
-            core::ptr::addr_of!(__kernel_start) as u64,
-            PAGE_SIZE as u64,
-        );
-        let kernel_end = align_up(
-            core::ptr::addr_of!(__kernel_end) as u64,
-            PAGE_SIZE as u64,
-        );
+        let kernel_start = align_down(core::ptr::addr_of!(__kernel_start) as u64, PAGE_SIZE as u64);
+        let kernel_end = align_up(core::ptr::addr_of!(__kernel_end) as u64, PAGE_SIZE as u64);
         self.allocator.reserve_range(kernel_start, kernel_end);
 
         self.phys_window_end = align_up(highest_end, 2 * 1024 * 1024);
@@ -777,7 +788,10 @@ impl PhysicalAllocator {
                 continue;
             }
 
-            assert!(self.count < self.regions.len(), "allocator free-range capacity exhausted");
+            assert!(
+                self.count < self.regions.len(),
+                "allocator free-range capacity exhausted"
+            );
 
             let right = PhysicalRegion::new(end, region.end);
             self.regions[index].end = start;
@@ -814,7 +828,10 @@ impl PhysicalAllocator {
             self.remove_region(index);
         }
 
-        assert!(self.count < self.regions.len(), "allocator free-range capacity exhausted");
+        assert!(
+            self.count < self.regions.len(),
+            "allocator free-range capacity exhausted"
+        );
 
         let mut insert_at = 0;
         while insert_at < self.count && self.regions[insert_at].start < merged_start {
@@ -1037,7 +1054,9 @@ impl UserPageMap {
         let mut address = start_address;
         while !remaining.is_empty() {
             let virt_page = align_down(address, PAGE_SIZE as u64);
-            let page = self.find(virt_page).ok_or(MemoryError::UserImageOutOfRange)?;
+            let page = self
+                .find(virt_page)
+                .ok_or(MemoryError::UserImageOutOfRange)?;
             let offset = (address - virt_page) as usize;
             let length = remaining.len().min(PAGE_SIZE - offset);
 

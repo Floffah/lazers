@@ -126,12 +126,26 @@ static mut STARTUP_ARGS: StartupArgs = StartupArgs {
 
 /// Reads bytes from a process-owned descriptor into the provided buffer.
 pub fn read(fd: usize, buffer: &mut [u8]) -> usize {
-    unsafe { user_syscall3(Syscall::Read as usize, fd, buffer.as_mut_ptr() as usize, buffer.len()) }
+    unsafe {
+        user_syscall3(
+            Syscall::Read as usize,
+            fd,
+            buffer.as_mut_ptr() as usize,
+            buffer.len(),
+        )
+    }
 }
 
 /// Writes bytes to a process-owned descriptor from the provided buffer.
 pub fn write(fd: usize, buffer: &[u8]) -> usize {
-    unsafe { user_syscall3(Syscall::Write as usize, fd, buffer.as_ptr() as usize, buffer.len()) }
+    unsafe {
+        user_syscall3(
+            Syscall::Write as usize,
+            fd,
+            buffer.as_ptr() as usize,
+            buffer.len(),
+        )
+    }
 }
 
 /// Reads from the current process' standard input stream.
@@ -233,8 +247,14 @@ pub fn read_dir(path: &str, buffer: &mut [u8]) -> Result<usize, ReadDirError> {
 
 /// Changes the current process working directory.
 pub fn chdir(path: &str) -> Result<(), ChdirError> {
-    let status =
-        unsafe { user_syscall3(Syscall::Chdir as usize, path.as_ptr() as usize, path.len(), 0) };
+    let status = unsafe {
+        user_syscall3(
+            Syscall::Chdir as usize,
+            path.as_ptr() as usize,
+            path.len(),
+            0,
+        )
+    };
     match status {
         0 => Ok(()),
         kernel_abi::chdir::INVALID_PATH => Err(ChdirError::InvalidPath),
@@ -246,8 +266,14 @@ pub fn chdir(path: &str) -> Result<(), ChdirError> {
 
 /// Copies the current process working directory into the provided buffer.
 pub fn getcwd(buffer: &mut [u8]) -> Result<usize, GetCwdError> {
-    let status =
-        unsafe { user_syscall3(Syscall::GetCwd as usize, buffer.as_mut_ptr() as usize, buffer.len(), 0) };
+    let status = unsafe {
+        user_syscall3(
+            Syscall::GetCwd as usize,
+            buffer.as_mut_ptr() as usize,
+            buffer.len(),
+            0,
+        )
+    };
     match status {
         kernel_abi::getcwd::BUFFER_TOO_SMALL => Err(GetCwdError::BufferTooSmall),
         kernel_abi::getcwd::RESOURCE_UNAVAILABLE => Err(GetCwdError::ResourceUnavailable),
@@ -320,8 +346,14 @@ pub fn set_env(key: &str, value: &str) -> Result<(), SetEnvError> {
 
 /// Removes one process-owned environment variable.
 pub fn unset_env(key: &str) -> Result<(), UnsetEnvError> {
-    let status =
-        unsafe { user_syscall3(Syscall::UnsetEnv as usize, key.as_ptr() as usize, key.len(), 0) };
+    let status = unsafe {
+        user_syscall3(
+            Syscall::UnsetEnv as usize,
+            key.as_ptr() as usize,
+            key.len(),
+            0,
+        )
+    };
     match status {
         0 => Ok(()),
         kernel_abi::unset_env::INVALID_KEY => Err(UnsetEnvError::InvalidKey),
@@ -334,8 +366,14 @@ pub fn unset_env(key: &str) -> Result<(), UnsetEnvError> {
 /// Serializes the current process environment as newline-delimited `KEY=VALUE`
 /// entries in insertion order.
 pub fn list_env(buffer: &mut [u8]) -> Result<usize, ListEnvError> {
-    let status =
-        unsafe { user_syscall3(Syscall::ListEnv as usize, buffer.as_mut_ptr() as usize, buffer.len(), 0) };
+    let status = unsafe {
+        user_syscall3(
+            Syscall::ListEnv as usize,
+            buffer.as_mut_ptr() as usize,
+            buffer.len(),
+            0,
+        )
+    };
     match status {
         kernel_abi::list_env::BUFFER_TOO_SMALL => Err(ListEnvError::BufferTooSmall),
         kernel_abi::list_env::RESOURCE_UNAVAILABLE => Err(ListEnvError::ResourceUnavailable),

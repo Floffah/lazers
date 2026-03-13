@@ -33,7 +33,7 @@ This is the high-level roadmap for Lazers as it exists now. It tracks major capa
 - [x] Raw GPT disk image with separate `LAZERS-ESP` and `LAZERS-SYSTEM` partitions
 - [x] AHCI/SATA disk access in the kernel
 - [x] Runtime root filesystem mounted from the system partition
-- [x] Disk-backed user executable loading from `/bin/...`
+- [x] Disk-backed user executable loading from `/system/bin/...`
 - [x] `liblazer` bootstrap runtime for early userland programs
 - [x] User-initiated child process spawn and synchronous wait
 - [x] First shell as a normal userland program: `lash`
@@ -81,7 +81,7 @@ Other tasks for debugging and development include:
 - `just build-kernel` - builds the kernel only
 - `just build-user` - builds the user binaries only
 - `just image` - assembles the disk image from the boot, kernel, and user artifacts
-- `just image-selftest` - assembles a separate image that launches `/bin/selftest` as the first user program
+- `just image-selftest` - assembles a separate image that launches `/system/bin/selftest` as the first user program
 
 ## Running
 

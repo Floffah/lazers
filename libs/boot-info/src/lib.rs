@@ -97,4 +97,3 @@ pub enum MemoryRegionKind {
     Persistent = 8,
     Unusable = 9,
 }
-

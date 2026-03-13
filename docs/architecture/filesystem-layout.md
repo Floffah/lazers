@@ -21,8 +21,8 @@ Today that means:
 - the loader lives at `/EFI/BOOT/BOOTX64.EFI` on the ESP
 - the kernel image lives at `/lazers/kernel.elf` on the ESP
 - normal runtime paths resolve only against `LAZERS-SYSTEM`
-- shipped commands are currently staged under `/bin`
-- `lash` resolves bare command names to `/bin/<name>`
+- shipped commands are currently staged under `/system/bin`
+- `lash` resolves bare command names through `PATH`, with bootstrap images currently seeding `/system/bin:/bin`
 
 This is a practical bootstrap layout, not the intended final namespace.
 
@@ -57,17 +57,13 @@ The kernel should stay narrow here:
 
 The kernel should not own command-search policy. That belongs in userspace, especially once environment variables and `PATH` exist.
 
-## Migration From `/bin`
+## Compatibility With `/bin`
 
-The current `/bin` layout is a bootstrap convenience. The intended direction is to move OS-provided commands into `/system/bin`.
+Lazers now stages shipped commands in `/system/bin`.
 
-The planned sequence is:
+The bootstrap environment still seeds `PATH` as `/system/bin:/bin` so bare command lookup prefers the system-provided location while preserving compatibility with older images or mixed runtime layouts that still carry `/bin`.
 
-1. keep `/bin` while the early shell and command set are still stabilizing
-2. add inherited environment variables and shell-side `PATH`
-3. make the shell prefer `/system/bin` and `/apps/bin`
-4. move shipped binaries from `/bin` to `/system/bin`
-5. decide whether `/bin` remains as a temporary compatibility path or disappears
+That compatibility does not require new images to duplicate binaries into `/bin`.
 
 ## Intentionally Deferred
 

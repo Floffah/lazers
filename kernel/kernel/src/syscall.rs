@@ -29,16 +29,22 @@ pub fn dispatch(frame: &mut TrapFrame) {
             crate::scheduler::exit_current_process(frame.rdi as usize);
         }
         value if value == Syscall::SpawnWait as u64 => {
-            frame.rax = syscall_spawn_wait(frame.rdi, frame.rsi as usize, frame.rdx, frame.rcx as usize) as u64;
+            frame.rax =
+                syscall_spawn_wait(frame.rdi, frame.rsi as usize, frame.rdx, frame.rcx as usize)
+                    as u64;
         }
         value if value == Syscall::SpawnWaitSilent as u64 => {
-            frame.rax =
-                syscall_spawn_wait_silent(frame.rdi, frame.rsi as usize, frame.rdx, frame.rcx as usize)
-                    as u64;
+            frame.rax = syscall_spawn_wait_silent(
+                frame.rdi,
+                frame.rsi as usize,
+                frame.rdx,
+                frame.rcx as usize,
+            ) as u64;
         }
         value if value == Syscall::ReadDir as u64 => {
             frame.rax =
-                syscall_read_dir(frame.rdi, frame.rsi as usize, frame.rdx, frame.rcx as usize) as u64;
+                syscall_read_dir(frame.rdi, frame.rsi as usize, frame.rdx, frame.rcx as usize)
+                    as u64;
         }
         value if value == Syscall::Chdir as u64 => {
             frame.rax = syscall_chdir(frame.rdi, frame.rsi as usize) as u64;
@@ -48,15 +54,18 @@ pub fn dispatch(frame: &mut TrapFrame) {
         }
         value if value == Syscall::ReadFile as u64 => {
             frame.rax =
-                syscall_read_file(frame.rdi, frame.rsi as usize, frame.rdx, frame.rcx as usize) as u64;
+                syscall_read_file(frame.rdi, frame.rsi as usize, frame.rdx, frame.rcx as usize)
+                    as u64;
         }
         value if value == Syscall::GetEnv as u64 => {
             frame.rax =
-                syscall_get_env(frame.rdi, frame.rsi as usize, frame.rdx, frame.rcx as usize) as u64;
+                syscall_get_env(frame.rdi, frame.rsi as usize, frame.rdx, frame.rcx as usize)
+                    as u64;
         }
         value if value == Syscall::SetEnv as u64 => {
             frame.rax =
-                syscall_set_env(frame.rdi, frame.rsi as usize, frame.rdx, frame.rcx as usize) as u64;
+                syscall_set_env(frame.rdi, frame.rsi as usize, frame.rdx, frame.rcx as usize)
+                    as u64;
         }
         value if value == Syscall::UnsetEnv as u64 => {
             frame.rax = syscall_unset_env(frame.rdi, frame.rsi as usize) as u64;
@@ -86,7 +95,12 @@ fn syscall_write(fd: usize, buffer_address: u64, len: usize) -> usize {
     crate::scheduler::current_process_write(fd, buffer)
 }
 
-fn syscall_spawn_wait(path_address: u64, path_len: usize, argv_address: u64, argv_len: usize) -> usize {
+fn syscall_spawn_wait(
+    path_address: u64,
+    path_len: usize,
+    argv_address: u64,
+    argv_len: usize,
+) -> usize {
     let Some(path_bytes) = memory::user_slice(path_address, path_len) else {
         return kernel_abi::spawn_wait::INVALID_PATH;
     };
@@ -162,12 +176,11 @@ fn syscall_read_dir(
             crate::storage::StorageError::InvalidPath
             | crate::storage::StorageError::PathNotAbsolute
             | crate::storage::StorageError::InvalidShortName,
-        ) => {
-            kernel_abi::read_dir::INVALID_PATH
-        }
-        Err(crate::storage::StorageError::FileNotFound | crate::storage::StorageError::NotADirectory) => {
-            kernel_abi::read_dir::NOT_FOUND
-        }
+        ) => kernel_abi::read_dir::INVALID_PATH,
+        Err(
+            crate::storage::StorageError::FileNotFound
+            | crate::storage::StorageError::NotADirectory,
+        ) => kernel_abi::read_dir::NOT_FOUND,
         Err(crate::storage::StorageError::BufferTooSmall) => kernel_abi::read_dir::BUFFER_TOO_SMALL,
         Err(_) => kernel_abi::read_dir::RESOURCE_UNAVAILABLE,
     }
@@ -188,9 +201,10 @@ fn syscall_chdir(path_address: u64, path_len: usize) -> usize {
             | crate::storage::StorageError::PathNotAbsolute
             | crate::storage::StorageError::InvalidShortName,
         ) => kernel_abi::chdir::INVALID_PATH,
-        Err(crate::storage::StorageError::FileNotFound | crate::storage::StorageError::NotADirectory) => {
-            kernel_abi::chdir::NOT_FOUND
-        }
+        Err(
+            crate::storage::StorageError::FileNotFound
+            | crate::storage::StorageError::NotADirectory,
+        ) => kernel_abi::chdir::NOT_FOUND,
         Err(_) => kernel_abi::chdir::RESOURCE_UNAVAILABLE,
     }
 }
@@ -233,7 +247,9 @@ fn syscall_read_file(
         ) => kernel_abi::read_file::INVALID_PATH,
         Err(crate::storage::StorageError::FileNotFound) => kernel_abi::read_file::NOT_FOUND,
         Err(crate::storage::StorageError::NotAFile) => kernel_abi::read_file::NOT_A_FILE,
-        Err(crate::storage::StorageError::BufferTooSmall) => kernel_abi::read_file::BUFFER_TOO_SMALL,
+        Err(crate::storage::StorageError::BufferTooSmall) => {
+            kernel_abi::read_file::BUFFER_TOO_SMALL
+        }
         Err(_) => kernel_abi::read_file::RESOURCE_UNAVAILABLE,
     }
 }
@@ -259,7 +275,9 @@ fn syscall_get_env(
         Err(crate::scheduler::EnvironmentAccessError::InvalidKey)
         | Err(crate::scheduler::EnvironmentAccessError::KeyTooLong)
         | Err(crate::scheduler::EnvironmentAccessError::ValueTooLong)
-        | Err(crate::scheduler::EnvironmentAccessError::CapacityExceeded) => kernel_abi::get_env::INVALID_KEY,
+        | Err(crate::scheduler::EnvironmentAccessError::CapacityExceeded) => {
+            kernel_abi::get_env::INVALID_KEY
+        }
         Err(crate::scheduler::EnvironmentAccessError::NotFound) => kernel_abi::get_env::NOT_FOUND,
         Err(crate::scheduler::EnvironmentAccessError::BufferTooSmall) => {
             kernel_abi::get_env::BUFFER_TOO_SMALL
@@ -291,8 +309,12 @@ fn syscall_set_env(
 
     match crate::scheduler::current_process_set_env(key, value) {
         Ok(()) => 0,
-        Err(crate::scheduler::EnvironmentAccessError::InvalidKey) => kernel_abi::set_env::INVALID_KEY,
-        Err(crate::scheduler::EnvironmentAccessError::KeyTooLong) => kernel_abi::set_env::KEY_TOO_LONG,
+        Err(crate::scheduler::EnvironmentAccessError::InvalidKey) => {
+            kernel_abi::set_env::INVALID_KEY
+        }
+        Err(crate::scheduler::EnvironmentAccessError::KeyTooLong) => {
+            kernel_abi::set_env::KEY_TOO_LONG
+        }
         Err(crate::scheduler::EnvironmentAccessError::ValueTooLong) => {
             kernel_abi::set_env::VALUE_TOO_LONG
         }
