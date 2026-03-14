@@ -2,11 +2,11 @@ use core::cell::UnsafeCell;
 
 use crate::memory;
 use crate::pci;
+use lzutil::{align_down, align_up};
 
 use super::ahci::{AhciController, BlockDevice, AHCI_MMIO_SIZE};
 use super::fat32::Fat32;
 use super::gpt::{GptPartitions, EFI_SYSTEM_PARTITION_GUID};
-use super::util::{align_down, align_up};
 use super::StorageError;
 
 static ROOT_FS: RootFsCell = RootFsCell::new();

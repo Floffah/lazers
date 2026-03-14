@@ -1,6 +1,7 @@
 use super::ahci::BlockDevice;
-use super::util::{align_up, read_le_u16, read_le_u32, read_le_u64, SECTOR_SIZE};
+use super::util::SECTOR_SIZE;
 use super::StorageError;
+use lzutil::{align_up, read_le_u16, read_le_u32, read_le_u64};
 
 const GPT_HEADER_LBA: u64 = 1;
 const GPT_HEADER_SIGNATURE: [u8; 8] = *b"EFI PART";

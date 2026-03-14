@@ -1,9 +1,10 @@
 #[cfg(test)]
 use core::ptr::write_bytes;
+use lzutil::{align_down, align_up};
 
 use super::state::with_state_mut;
 use super::types::{MemoryError, OwnedPages, PAGE_HUGE, PAGE_PRESENT, PAGE_SIZE, PAGE_TABLE_FLAGS};
-use super::util::{align_down, pd_index, pdpt_index, pml4_index, pt_index};
+use super::util::{pd_index, pdpt_index, pml4_index, pt_index};
 
 pub(super) const ADDRESS_MASK: u64 = 0x000f_ffff_ffff_f000;
 
@@ -27,7 +28,7 @@ impl AddressSpaceBuilder {
         flags: u64,
     ) -> Result<(), MemoryError> {
         let mut address = align_down(start, 2 * 1024 * 1024);
-        let limit = super::util::align_up(end, 2 * 1024 * 1024);
+        let limit = align_up(end, 2 * 1024 * 1024);
         while address < limit {
             self.map_2m(address, address, flags)?;
             address += 2 * 1024 * 1024;
@@ -42,7 +43,7 @@ impl AddressSpaceBuilder {
         flags: u64,
     ) -> Result<(), MemoryError> {
         let mut address = align_down(start, PAGE_SIZE as u64);
-        let limit = super::util::align_up(end, PAGE_SIZE as u64);
+        let limit = align_up(end, PAGE_SIZE as u64);
         while address < limit {
             self.map_4k(address, address, flags)?;
             address += PAGE_SIZE as u64;

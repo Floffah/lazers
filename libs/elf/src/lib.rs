@@ -2,6 +2,7 @@
 
 use core::mem::size_of;
 use core::ops::Range;
+use lzutil::{read_le_u16, read_le_u32, read_le_u64};
 
 pub const PT_LOAD: u32 = 1;
 pub const PF_X: u32 = 1 << 0;
@@ -88,13 +89,13 @@ impl ProgramHeader {
         }
 
         Ok(Self {
-            kind: read_u32(bytes, 0),
-            flags: read_u32(bytes, 4),
-            offset: read_u64(bytes, 8),
-            virtual_address: read_u64(bytes, 16),
-            physical_address: read_u64(bytes, 24),
-            file_size: read_u64(bytes, 32),
-            memory_size: read_u64(bytes, 40),
+            kind: read_le_u32(bytes, 0),
+            flags: read_le_u32(bytes, 4),
+            offset: read_le_u64(bytes, 8),
+            virtual_address: read_le_u64(bytes, 16),
+            physical_address: read_le_u64(bytes, 24),
+            file_size: read_le_u64(bytes, 32),
+            memory_size: read_le_u64(bytes, 40),
         })
     }
 
@@ -165,20 +166,20 @@ impl ElfHeader {
         if bytes[6] != 1 {
             return Err(ElfError::UnsupportedVersion);
         }
-        if read_u16(bytes, 16) != ELF_TYPE_EXECUTABLE {
+        if read_le_u16(bytes, 16) != ELF_TYPE_EXECUTABLE {
             return Err(ElfError::UnsupportedType);
         }
-        if read_u16(bytes, 18) != ELF_MACHINE_X86_64 {
+        if read_le_u16(bytes, 18) != ELF_MACHINE_X86_64 {
             return Err(ElfError::UnsupportedMachine);
         }
-        if read_u32(bytes, 20) != 1 {
+        if read_le_u32(bytes, 20) != 1 {
             return Err(ElfError::UnsupportedVersion);
         }
 
         let program_header_offset =
-            usize::try_from(read_u64(bytes, 32)).map_err(|_| ElfError::AddressOutOfRange)?;
-        let program_header_entry_size = usize::from(read_u16(bytes, 54));
-        let program_header_count = read_u16(bytes, 56);
+            usize::try_from(read_le_u64(bytes, 32)).map_err(|_| ElfError::AddressOutOfRange)?;
+        let program_header_entry_size = usize::from(read_le_u16(bytes, 54));
+        let program_header_count = read_le_u16(bytes, 56);
         let table_size = program_header_entry_size
             .checked_mul(program_header_count as usize)
             .ok_or(ElfError::AddressOutOfRange)?;
@@ -190,7 +191,7 @@ impl ElfHeader {
         }
 
         Ok(Self {
-            entry: read_u64(bytes, 24),
+            entry: read_le_u64(bytes, 24),
             program_header_offset,
             program_header_entry_size,
             program_header_count,
@@ -206,16 +207,4 @@ struct ElfHeaderLayout {
 #[repr(C)]
 struct ElfProgramHeaderLayout {
     _unused: [u8; 56],
-}
-
-fn read_u16(bytes: &[u8], offset: usize) -> u16 {
-    u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap())
-}
-
-fn read_u32(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
-}
-
-fn read_u64(bytes: &[u8], offset: usize) -> u64 {
-    u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap())
 }

@@ -1,7 +1,8 @@
 use super::ahci::BlockDevice;
 use super::gpt::GptPartition;
-use super::util::{read_le_u16, read_le_u32, SECTOR_SIZE};
+use super::util::SECTOR_SIZE;
 use super::StorageError;
+use lzutil::{read_le_u16, read_le_u32};
 
 const FAT_DIRECTORY_ENTRY_SIZE: usize = 32;
 const FAT_ATTRIBUTE_DIRECTORY: u8 = 1 << 4;

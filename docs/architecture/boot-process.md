@@ -43,6 +43,8 @@ The loader only understands the ESP. It loads the kernel and hands off. The kern
 
 That same runtime path is used for the initial user program and for commands launched later by `lash`.
 
+The loader, kernel, and shared ELF parser also now rely on one tiny internal workspace utility crate for shared alignment and little-endian parsing helpers. That boundary is intentionally narrow: it exists to remove low-level duplication without pulling higher-level boot or kernel policy into a shared library.
+
 ## Current First User Program
 
 The kernel does not hardcode shell behavior, but it does currently choose one initial user program at build time. The default is `/system/bin/lash`, and alternate bootstrap programs like `/system/bin/selftest` can be selected for specialized images.

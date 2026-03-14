@@ -1,4 +1,5 @@
 use boot_info::{BootInfo, MemoryRegionKind};
+use lzutil::{align_down, align_up};
 
 use super::paging::AddressSpaceBuilder;
 use super::state::{with_state, with_state_mut, MemoryState};
@@ -6,7 +7,6 @@ use super::types::{
     AddressSpace, KernelBuffer, MemoryError, PAGE_PRESENT, PAGE_SIZE, PAGE_WRITABLE,
     PHYS_WINDOW_START,
 };
-use super::util::{align_down, align_up};
 
 #[cfg(not(test))]
 unsafe extern "C" {

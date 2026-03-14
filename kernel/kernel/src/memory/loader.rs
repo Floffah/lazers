@@ -2,6 +2,7 @@ use core::ptr::copy_nonoverlapping;
 use core::slice;
 
 use elf::{ElfImage, PF_W, PT_LOAD};
+use lzutil::{align_down, align_up};
 
 use super::kernel::map_shared_kernel_context;
 use super::paging::AddressSpaceBuilder;
@@ -11,7 +12,6 @@ use super::types::{
     MAX_STARTUP_ARGS, PAGE_PRESENT, PAGE_SIZE, PAGE_USER, PAGE_WRITABLE, USER_IMAGE_BASE,
     USER_STACK_PAGES, USER_STACK_TOP,
 };
-use super::util::{align_down, align_up};
 
 /// Parses and maps one user ELF into a fresh user address space.
 ///

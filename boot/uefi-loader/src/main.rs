@@ -9,6 +9,7 @@ use boot_info::{BootInfo, FramebufferInfo, MemoryRegion, MemoryRegionKind, Pixel
 use core::arch::asm;
 use core::ptr::{copy_nonoverlapping, write_bytes};
 use elf::{ElfError, ElfImage, PT_LOAD};
+use lzutil::{align_down, align_up};
 use uefi::boot::{self, AllocateType, MemoryType};
 use uefi::fs::FileSystem;
 use uefi::mem::memory_map::MemoryMap;
@@ -224,16 +225,6 @@ fn normalize_memory_region(descriptor: &uefi::mem::memory_map::MemoryDescriptor)
         kind,
         reserved: 0,
     }
-}
-
-#[inline]
-fn align_down(value: u64, align: u64) -> u64 {
-    value & !(align - 1)
-}
-
-#[inline]
-fn align_up(value: u64, align: u64) -> u64 {
-    (value + (align - 1)) & !(align - 1)
 }
 
 unsafe fn jump_to_kernel(entry_point: u64, boot_info: *const BootInfo, stack_top: u64) -> ! {

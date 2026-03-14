@@ -41,6 +41,9 @@ dependencies = [
 [[package]]
 name = "elf"
 version = "0.1.0"
+dependencies = [
+ "lzutil",
+]
 
 [[package]]
 name = "kernel"
@@ -49,6 +52,7 @@ dependencies = [
  "boot-info",
  "elf",
  "kernel-abi",
+ "lzutil",
 ]
 
 [[package]]
@@ -81,6 +85,10 @@ version = "0.1.0"
 dependencies = [
  "liblazer",
 ]
+
+[[package]]
+name = "lzutil"
+version = "0.1.0"
 
 [[package]]
 name = "proc-macro2"
@@ -176,6 +184,7 @@ version = "0.1.0"
 dependencies = [
  "boot-info",
  "elf",
+ "lzutil",
  "uefi",
 ]
 

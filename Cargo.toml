@@ -7,6 +7,7 @@ members = [
     "libs/elf",
     "libs/kernel-abi",
     "libs/liblazer",
+    "libs/lzutil",
     "user/cat",
     "user/echo",
     "user/lash",
@@ -25,6 +26,7 @@ boot-info = { path = "libs/boot-info" }
 elf = { path = "libs/elf" }
 kernel-abi = { path = "libs/kernel-abi" }
 liblazer = { path = "libs/liblazer" }
+lzutil = { path = "libs/lzutil" }
 
 [profile.dev]
 panic = "abort"

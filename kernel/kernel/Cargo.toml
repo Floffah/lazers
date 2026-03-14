@@ -9,6 +9,7 @@ publish.workspace = true
 boot-info.workspace = true
 elf.workspace = true
 kernel-abi.workspace = true
+lzutil.workspace = true
 
 [build-dependencies]
 
