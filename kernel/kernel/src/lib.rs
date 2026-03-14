@@ -24,10 +24,6 @@ pub mod font;
 pub mod io;
 #[cfg(not(test))]
 pub mod keyboard;
-#[cfg(not(test))]
-pub mod memory;
-#[cfg(test)]
-#[path = "memory_test.rs"]
 pub mod memory;
 #[cfg(not(test))]
 pub mod pci;
@@ -52,7 +48,7 @@ pub fn halt_forever() -> ! {
     loop {
         unsafe {
             asm!(
-                include_str!("halt_forever.main.asm"),
+                include_str!("halt_forever.lib.asm"),
                 options(nomem, nostack, preserves_flags)
             );
         }

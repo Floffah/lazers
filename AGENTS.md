@@ -15,8 +15,9 @@ You are a world renowned software architect and engineer with deep expertise in 
 - Use `just` as the primary task runner for local workflows.
 - Treat this repository as a monorepo.
 - Treat the kernel architecture as a modular monolith unless an explicit architectural decision changes that direction.
-- Keep documentation close to major structural decisions. Prefer current-state architecture documents under `docs/architecture/` and the nearest relevant `README.md` for local context.
+- Keep documentation close to major structural decisions. Prefer current-state architecture documents under `docs/architecture/` and the nearest relevant `README.md` for local context. If you update markdown files in the `docs/` folder, make sure the docs/.vitepress/config.mts sidebar is updated to include them.
 - Favor small, explicit module boundaries and coherent naming from the beginning rather than relying on later cleanup passes.
 - Preserve the core product direction in implementation decisions: lean enough for modest hardware, modular enough to remove unneeded subsystems cleanly, and usable with sensible defaults rather than constant manual configuration.
 - Do not import Unix, DOS, or Windows conventions by reflex. Reuse an inherited pattern only when it is a deliberate fit for this system.
 - To check changes, run `just check`, then either `just run-headless` or `just run-selftest-headless` which both produce a screenshot of the running system in the build directory. For further tests that require the QEMU gui, stop and ask the user to verify it manually before proceeding.
+- Assembly harnesses are expected to be in a separate file of the format `[function].[rust_file].asm` (global ones are just `[rust_file].asm`) in the same directory as the rust file. They should be included in the rust file with `include_str!` and passed to the `global_asm!` or `asm!` macros. Assembly should be kept to minimum, only do it if it's not trivial to do it in Rust but is necessary for the kernel to function.

@@ -4,9 +4,9 @@ This document captures repository cleanup opportunities that should not change f
 
 ## Findings
 
-### P1: Split the storage stack into submodules
+### ~~P1: Split the storage stack into submodules~~
 
-The storage stack is carrying too many layers in one file. AHCI MMIO, block IO, GPT parsing, FAT32 traversal, root-fs state, and cwd-relative path normalization all live together in [storage.rs](/Users/ramsay/Documents/Projects/fun/lazers/kernel/kernel/src/storage.rs#L1), [storage.rs](/Users/ramsay/Documents/Projects/fun/lazers/kernel/kernel/src/storage.rs#L170), [storage.rs](/Users/ramsay/Documents/Projects/fun/lazers/kernel/kernel/src/storage.rs#L209), [storage.rs](/Users/ramsay/Documents/Projects/fun/lazers/kernel/kernel/src/storage.rs#L521), [storage.rs](/Users/ramsay/Documents/Projects/fun/lazers/kernel/kernel/src/storage.rs#L650), and [storage.rs](/Users/ramsay/Documents/Projects/fun/lazers/kernel/kernel/src/storage.rs#L1171). It works, but it is the clearest candidate for splitting into `ahci`, `gpt`, `fat32`, `path`, and `rootfs` submodules.
+~~The storage stack is carrying too many layers in one file. AHCI MMIO, block IO, GPT parsing, FAT32 traversal, root-fs state, and cwd-relative path normalization all live together in [storage.rs](/Users/ramsay/Documents/Projects/fun/lazers/kernel/kernel/src/storage.rs#L1), [storage.rs](/Users/ramsay/Documents/Projects/fun/lazers/kernel/kernel/src/storage.rs#L170), [storage.rs](/Users/ramsay/Documents/Projects/fun/lazers/kernel/kernel/src/storage.rs#L209), [storage.rs](/Users/ramsay/Documents/Projects/fun/lazers/kernel/kernel/src/storage.rs#L521), [storage.rs](/Users/ramsay/Documents/Projects/fun/lazers/kernel/kernel/src/storage.rs#L650), and [storage.rs](/Users/ramsay/Documents/Projects/fun/lazers/kernel/kernel/src/storage.rs#L1171). It works, but it is the clearest candidate for splitting into `ahci`, `gpt`, `fat32`, `path`, and `rootfs` submodules.~~
 
 ### P1: Split memory management into clearer units
 
