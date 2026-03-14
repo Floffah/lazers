@@ -36,6 +36,7 @@ Today, `liblazer` provides:
 
 - process startup glue
 - syscall shims
+- a private runtime layer for argv and panic behavior
 - panic-to-exit behavior
 - basic stdio helpers
 - `args()`

@@ -47,6 +47,8 @@ Today it provides:
 
 - process startup glue
 - syscall-entry assembly shims
+- a private runtime layer for startup argv state and panic handling
+- private raw syscall wrappers used by the typed APIs
 - panic-to-exit behavior
 - stdio helpers
 - argv access through `args()`
