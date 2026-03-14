@@ -15,8 +15,9 @@ If you are new to the project, the most useful reading order is:
 5. [Text Runtime](/architecture/text-runtime)
 6. [Storage and Loading](/architecture/storage-and-loading)
 7. [Memory Management](/architecture/memory-management)
-8. [Filesystem Layout](/architecture/filesystem-layout)
-9. [Repository Structure](/architecture/repository-structure)
+8. [Scheduler and Process Services](/architecture/scheduler-and-process-services)
+9. [Filesystem Layout](/architecture/filesystem-layout)
+10. [Repository Structure](/architecture/repository-structure)
 
 Together, those pages answer the most common architecture questions:
 
