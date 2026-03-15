@@ -24,11 +24,11 @@ export default defineConfig({
                     items: [
                         {text: "System Vision", link: '/architecture/system-vision'},
                         {text: "Boot Process", link: '/architecture/boot-process'},
-                        {text: "Storage Model", link: '/architecture/storage-and-loading'},
+                        {text: "Storage and Loading", link: '/architecture/storage-and-loading'},
                         {text: "Memory Management", link: '/architecture/memory-management'},
-                        {text: "Scheduler Services", link: '/architecture/scheduler-and-process-services'},
-                        {text: "File System", link: '/architecture/filesystem-layout'},
-                        {text: "Kernel Interface", link: '/architecture/user-kernel-interface'},
+                        {text: "Scheduler and Process Services", link: '/architecture/scheduler-and-process-services'},
+                        {text: "Filesystem Layout", link: '/architecture/filesystem-layout'},
+                        {text: "User and Kernel Interface", link: '/architecture/user-kernel-interface'},
                         {text: "Runtime Model", link: '/architecture/runtime-model'},
                         {text: "Text Runtime", link: '/architecture/text-runtime'},
                     ]
