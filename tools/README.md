@@ -2,6 +2,11 @@
 
 This directory owns repository-local tooling for image creation, local execution, debugging, inspection, and related workflows.
 
+Top-level scripts under `tools/scripts/` are generic entrypoints. Host-specific implementations live under:
+
+- `tools/scripts/macos`
+- `tools/scripts/linux`
+
 The current tooling layer builds a raw GPT disk image with two `FAT32` partitions:
 
 - an EFI System Partition that stages `BOOTX64.EFI` and `kernel.elf`
@@ -12,7 +17,7 @@ The logical runtime namespace is lowercase:
 - runtime executables live under `/system/bin`
 - GPT partition names are `LAZERS-ESP` and `LAZERS-SYSTEM`
 
-The current macOS/FAT staging path is an implementation detail of image creation:
+The current FAT staging path is an implementation detail of image creation. The host-specific mechanism can vary by operating system, but the resulting image contract must stay the same:
 
 - mounted volume names are `LAZERSESP` and `LAZERSSYS`
 - staged runtime binaries are copied into `SYSTEM/BIN` with uppercase filenames before the kernel mounts the runtime partition

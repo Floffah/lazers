@@ -1,50 +1,11 @@
 #!/usr/bin/env bash
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-BUILD_DIR="$ROOT_DIR/build"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
+
 IMAGE_NAME="${LAZERS_IMAGE_NAME:-lazers.img}"
 IMAGE_PATH="$BUILD_DIR/$IMAGE_NAME"
 
-find_ovmf_code() {
-  local candidate
-
-  shopt -s nullglob
-
-  for candidate in \
-    /opt/homebrew/share/qemu/edk2-x86_64-code.fd \
-    /usr/local/share/qemu/edk2-x86_64-code.fd \
-    /opt/homebrew/Cellar/qemu/*/share/qemu/edk2-x86_64-code.fd
-  do
-    if [[ -f "$candidate" ]]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-
-  return 1
-}
-
-find_ovmf_vars_template() {
-  local candidate
-
-  shopt -s nullglob
-
-  for candidate in \
-    /opt/homebrew/share/qemu/edk2-x86_64-vars.fd \
-    /usr/local/share/qemu/edk2-x86_64-vars.fd \
-    /opt/homebrew/Cellar/qemu/*/share/qemu/edk2-x86_64-vars.fd \
-    /opt/homebrew/share/qemu/edk2-i386-vars.fd \
-    /usr/local/share/qemu/edk2-i386-vars.fd \
-    /opt/homebrew/Cellar/qemu/*/share/qemu/edk2-i386-vars.fd
-  do
-    if [[ -f "$candidate" ]]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-
-  return 1
-}
+source_platform_script "qemu.sh"
 
 require_qemu_image() {
   if [[ ! -f "$IMAGE_PATH" ]]; then
@@ -57,7 +18,7 @@ prepare_qemu_vars_copy() {
   local vars_path="$1"
   local ovmf_vars_template
 
-  ovmf_vars_template="$(find_ovmf_vars_template || true)"
+  ovmf_vars_template="$(platform_find_ovmf_vars_template || true)"
   if [[ -z "$ovmf_vars_template" ]]; then
     echo "unable to locate an EDK2 variable-store template" >&2
     exit 1
@@ -71,7 +32,7 @@ qemu_base_args() {
   local ovmf_code
   local vars_path="$1"
 
-  ovmf_code="$(find_ovmf_code || true)"
+  ovmf_code="$(platform_find_ovmf_code || true)"
   if [[ -z "$ovmf_code" ]]; then
     echo "unable to locate an OVMF/EDK2 x86_64 firmware image" >&2
     exit 1
@@ -88,4 +49,8 @@ qemu_base_args() {
     -device ide-hd,bus=ahci.0,drive=systemdisk \
     -no-reboot
   )
+}
+
+convert_ppm_to_png() {
+  platform_convert_ppm_to_png "$1" "$2"
 }

@@ -73,7 +73,7 @@ Important tasks include:
 - `just run-selftest-headless` - Same as `just run-selftest` but captures a headless screenshot
 - `just selftest` - Boots the selftest image headlessly, mirrors in-OS serial output to the host console, saves it to `build/selftest-serial.log`, and fails if the final selftest summary reports any failures or is missing
 - `just check` - runs a monorepo wide `cargo check` 
-- `just test` - runs a monorepo wide `cargo test`
+- `just test` - runs all rust tests and selftest
 - `just clean` - cleans build artifacts across the monorepo
 
 Other tasks for debugging and development include:
@@ -85,12 +85,12 @@ Other tasks for debugging and development include:
 
 ## Running
 
-If running on macOS, make sure you have qemu (homebrew) and rust installed with the correct toolchain (`just setup-toolchain`).
-Then all you need to do is run `just run` and everything will be built and you'll see the QEMU window pop up running lazers. Exiting the top-level `lash` shell now powers the system off.
+If running on macOS or Linux, make sure you have Rust installed with the correct toolchain (`just setup-toolchain`) plus the host-side packages needed for QEMU, OVMF firmware, and disk image creation.
+Then all you need to do is run `just run` and everything will be built and you'll see the QEMU window pop up running lazers. Exiting the top-level `lash` shell powers the system off.
 
 For actual hardware, I've not tested this, but it's probably possible.
-Likely all it involves is building it on macOS of course, running `just image`, and then flashing the resulting `build/lazers.img` to a disk drive or USB and booting from that on UEFI (x86) hardware.
+Likely all it involves is building it on a supported host, running `just image`, and then flashing the resulting `build/lazers.img` to a disk drive or USB and booting from that on UEFI (x86) hardware.
 
 ## Development
 
-Scripting and tooling currently only supports macOS, but the image will run anywhere QEMU x86 is supported.
+Tooling now supports macOS and Linux hosts. Generic entrypoints live under `tools/scripts/`, while host-specific implementations live under `tools/scripts/macos/` and `tools/scripts/linux/`.

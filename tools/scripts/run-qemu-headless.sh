@@ -43,6 +43,6 @@ fi
 
 sleep 4
 printf 'screendump %s\nquit\n' "$SCREENSHOT_PPM" | nc -U "$MONITOR_PATH" >/dev/null
-sips -s format png "$SCREENSHOT_PPM" --out "$SCREENSHOT_PNG" >/dev/null
+convert_ppm_to_png "$SCREENSHOT_PPM" "$SCREENSHOT_PNG"
 
 echo "captured headless boot screenshot at $SCREENSHOT_PNG"
