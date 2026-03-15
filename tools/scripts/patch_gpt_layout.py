@@ -10,11 +10,6 @@ GPT_SIGNATURE = b"EFI PART"
 EFI_SYSTEM_GUID_BYTES = bytes.fromhex("28732ac11ff8d211ba4b00a0c93ec93b")
 MICROSOFT_BASIC_DATA_GUID_BYTES = bytes.fromhex("a2a0d0ebe5b9334487c068b6b72699c7")
 
-PARTITION_NAMES = (
-    "LAZERS-ESP",
-    "LAZERS-SYSTEM",
-)
-
 
 def read_header(image, lba):
     image.seek(lba * SECTOR_SIZE)
@@ -35,7 +30,7 @@ def encode_partition_name(name: str) -> bytes:
     return encoded + bytes(72 - len(encoded))
 
 
-def update_table(image, table_lba, entry_count, entry_size):
+def update_table(image, table_lba, entry_count, entry_size, partition_names):
     table_size = entry_count * entry_size
     image.seek(table_lba * SECTOR_SIZE)
     table = bytearray(image.read(table_size))
@@ -51,19 +46,19 @@ def update_table(image, table_lba, entry_count, entry_size):
         raise RuntimeError("expected at least two populated GPT partition entries")
 
     table[populated[0] : populated[0] + 16] = EFI_SYSTEM_GUID_BYTES
-    table[populated[0] + 56 : populated[0] + 128] = encode_partition_name(PARTITION_NAMES[0])
+    table[populated[0] + 56 : populated[0] + 128] = encode_partition_name(partition_names[0])
 
     table[populated[1] : populated[1] + 16] = MICROSOFT_BASIC_DATA_GUID_BYTES
-    table[populated[1] + 56 : populated[1] + 128] = encode_partition_name(PARTITION_NAMES[1])
+    table[populated[1] + 56 : populated[1] + 128] = encode_partition_name(partition_names[1])
 
     image.seek(table_lba * SECTOR_SIZE)
     image.write(table)
     return binascii.crc32(table) & 0xFFFFFFFF
 
 
-def update_header(image, header_lba):
+def update_header(image, header_lba, partition_names):
     header, header_size, table_lba, entry_count, entry_size = read_header(image, header_lba)
-    table_crc = update_table(image, table_lba, entry_count, entry_size)
+    table_crc = update_table(image, table_lba, entry_count, entry_size, partition_names)
     struct.pack_into("<I", header, 88, table_crc)
     struct.pack_into("<I", header, 16, 0)
     header_crc = binascii.crc32(header[:header_size]) & 0xFFFFFFFF
@@ -73,17 +68,18 @@ def update_header(image, header_lba):
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        print("usage: patch_gpt_layout.py <raw-image>", file=sys.stderr)
+    if len(sys.argv) != 4:
+        print("usage: patch_gpt_layout.py <raw-image> <esp-name> <system-name>", file=sys.stderr)
         return 1
 
     image_path = sys.argv[1]
+    partition_names = (sys.argv[2], sys.argv[3])
     with open(image_path, "r+b") as image:
-        update_header(image, 1)
+        update_header(image, 1, partition_names)
         image.seek(SECTOR_SIZE)
         primary = image.read(SECTOR_SIZE)
         backup_lba = struct.unpack_from("<Q", primary, 32)[0]
-        update_header(image, backup_lba)
+        update_header(image, backup_lba, partition_names)
 
     return 0
 

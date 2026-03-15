@@ -24,13 +24,13 @@ This document captures repository cleanup opportunities that should not change f
 
 ~~`liblazer` is a single-file runtime that now bundles entry glue, raw syscalls, typed wrappers, env/fs/process APIs, formatting macros, panic behavior, and argv startup parsing in [lib.rs](/Users/ramsay/Documents/Projects/fun/lazers/libs/liblazer/src/lib.rs#L1), [lib.rs](/Users/ramsay/Documents/Projects/fun/lazers/libs/liblazer/src/lib.rs#L127), [lib.rs](/Users/ramsay/Documents/Projects/fun/lazers/libs/liblazer/src/lib.rs#L194), [lib.rs](/Users/ramsay/Documents/Projects/fun/lazers/libs/liblazer/src/lib.rs#L228), [lib.rs](/Users/ramsay/Documents/Projects/fun/lazers/libs/liblazer/src/lib.rs#L384), and [lib.rs](/Users/ramsay/Documents/Projects/fun/lazers/libs/liblazer/src/lib.rs#L479). Splitting this into small modules plus a result-decoding helper or macro would remove a lot of repetition.~~
 
-### P2: Deduplicate low-level utility helpers
+~~### P2: Deduplicate low-level utility helpers~~
 
-Low-level utility logic is duplicated across crates. `align_up` and `align_down` appear in [main.rs](/Users/ramsay/Documents/Projects/fun/lazers/boot/uefi-loader/src/main.rs#L229), [memory.rs](/Users/ramsay/Documents/Projects/fun/lazers/kernel/kernel/src/memory.rs#L1110), and [storage.rs](/Users/ramsay/Documents/Projects/fun/lazers/kernel/kernel/src/storage.rs#L1159). Little-endian readers appear in [lib.rs](/Users/ramsay/Documents/Projects/fun/lazers/libs/elf/src/lib.rs#L211) and [storage.rs](/Users/ramsay/Documents/Projects/fun/lazers/kernel/kernel/src/storage.rs#L1147). A tiny shared internal utility module would reduce drift.
+~~Low-level utility logic is duplicated across crates. `align_up` and `align_down` appear in [main.rs](/Users/ramsay/Documents/Projects/fun/lazers/boot/uefi-loader/src/main.rs#L229), [memory.rs](/Users/ramsay/Documents/Projects/fun/lazers/kernel/kernel/src/memory.rs#L1110), and [storage.rs](/Users/ramsay/Documents/Projects/fun/lazers/kernel/kernel/src/storage.rs#L1159). Little-endian readers appear in [lib.rs](/Users/ramsay/Documents/Projects/fun/lazers/libs/elf/src/lib.rs#L211) and [storage.rs](/Users/ramsay/Documents/Projects/fun/lazers/kernel/kernel/src/storage.rs#L1147). A tiny shared internal utility module would reduce drift.~~
 
-### P3: Consolidate build and image-assembly discovery logic
+~~### P3: Consolidate build and image-assembly discovery logic~~
 
-Build and discovery logic is repeated. User-package enumeration is duplicated in [justfile](/Users/ramsay/Documents/Projects/fun/lazers/justfile#L19) and [justfile](/Users/ramsay/Documents/Projects/fun/lazers/justfile#L51), then rediscovered again in [build-image.sh](/Users/ramsay/Documents/Projects/fun/lazers/tools/scripts/build-image.sh#L29). Consolidating that logic would reduce maintenance overhead.
+~~Build and discovery logic is repeated. User-package enumeration is duplicated in [justfile](/Users/ramsay/Documents/Projects/fun/lazers/justfile#L19) and [justfile](/Users/ramsay/Documents/Projects/fun/lazers/justfile#L51), then rediscovered again in [build-image.sh](/Users/ramsay/Documents/Projects/fun/lazers/tools/scripts/build-image.sh#L29). Consolidating that logic would reduce maintenance overhead.~~
 
 ### P3: Centralize or document naming mismatches in tooling
 

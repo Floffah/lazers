@@ -1,20 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-BUILD_DIR="$ROOT_DIR/build"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/user-packages.sh"
+
 IMAGE_NAME="${LAZERS_IMAGE_NAME:-lazers.img}"
 IMAGE_PATH="$BUILD_DIR/$IMAGE_NAME"
-ESP_MOUNT_POINT="/Volumes/LAZERSESP"
-SYSTEM_MOUNT_POINT="/Volumes/LAZERSSYS"
 LOADER_PATH="$ROOT_DIR/target/x86_64-unknown-uefi/release/uefi-loader.efi"
 KERNEL_PATH="$ROOT_DIR/target/x86_64-unknown-none/release/kernel"
 IMAGE_SIZE="256m"
-ESP_VOLUME_NAME="LAZERSESP"
-SYSTEM_VOLUME_NAME="LAZERSSYS"
 ESP_SIZE="64m"
 SYSTEM_SIZE="R"
-USER_PACKAGES=()
+
+LOGICAL_ESP_PARTITION_NAME="LAZERS-ESP"
+LOGICAL_SYSTEM_PARTITION_NAME="LAZERS-SYSTEM"
+LOGICAL_RUNTIME_BIN_DIR="/system/bin"
+
+ESP_VOLUME_NAME="LAZERSESP"
+SYSTEM_VOLUME_NAME="LAZERSSYS"
+ESP_MOUNT_POINT="/Volumes/$ESP_VOLUME_NAME"
+SYSTEM_MOUNT_POINT="/Volumes/$SYSTEM_VOLUME_NAME"
+STAGING_RUNTIME_BIN_DIR="/SYSTEM/BIN"
 
 if [[ ! -f "$LOADER_PATH" ]]; then
   echo "missing loader binary at $LOADER_PATH" >&2
@@ -26,14 +31,7 @@ if [[ ! -f "$KERNEL_PATH" ]]; then
   exit 1
 fi
 
-while IFS= read -r package; do
-  USER_PACKAGES+=("$package")
-done < <(find "$ROOT_DIR/user" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort)
-
-if [[ ${#USER_PACKAGES[@]} -eq 0 ]]; then
-  echo "no user packages found under $ROOT_DIR/user" >&2
-  exit 1
-fi
+load_user_packages_from_env
 
 for package in "${USER_PACKAGES[@]}"; do
   user_binary_path="$ROOT_DIR/build/$package"
@@ -93,13 +91,17 @@ mkdir -p "$ESP_MOUNT_POINT/EFI/BOOT" "$ESP_MOUNT_POINT/lazers"
 cp "$LOADER_PATH" "$ESP_MOUNT_POINT/EFI/BOOT/BOOTX64.EFI"
 cp "$KERNEL_PATH" "$ESP_MOUNT_POINT/lazers/kernel.elf"
 
-mkdir -p "$SYSTEM_MOUNT_POINT/SYSTEM/BIN"
+mkdir -p "$SYSTEM_MOUNT_POINT$STAGING_RUNTIME_BIN_DIR"
 for package in "${USER_PACKAGES[@]}"; do
-  cp "$ROOT_DIR/build/$package" "$SYSTEM_MOUNT_POINT/SYSTEM/BIN/${package^^}"
+  cp "$ROOT_DIR/build/$package" "$SYSTEM_MOUNT_POINT$STAGING_RUNTIME_BIN_DIR/${package^^}"
 done
 sync
 diskutil unmount "$ESP_PARTITION" >/dev/null
 diskutil unmount "$SYSTEM_PARTITION" >/dev/null
-python3 "$ROOT_DIR/tools/scripts/patch_gpt_layout.py" "$IMAGE_PATH"
+python3 \
+  "$ROOT_DIR/tools/scripts/patch_gpt_layout.py" \
+  "$IMAGE_PATH" \
+  "$LOGICAL_ESP_PARTITION_NAME" \
+  "$LOGICAL_SYSTEM_PARTITION_NAME"
 
-echo "created $IMAGE_PATH"
+echo "created $IMAGE_PATH with runtime binaries under $LOGICAL_RUNTIME_BIN_DIR"

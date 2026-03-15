@@ -24,6 +24,8 @@ Today that means:
 - shipped commands are currently staged under `/system/bin`
 - `lash` resolves bare command names through `PATH`, with bootstrap images currently seeding `/system/bin:/bin`
 
+The current image-builder stages those files through uppercase FAT paths during image assembly on macOS, but that is only a tooling detail. The runtime namespace the kernel and userspace rely on remains lowercase `/system/bin`.
+
 This is a practical bootstrap layout, not the intended final namespace.
 
 ## Runtime Layout Direction
