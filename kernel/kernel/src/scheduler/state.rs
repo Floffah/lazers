@@ -2,7 +2,7 @@ use core::cell::UnsafeCell;
 
 use crate::io::{KernelObject, StdioHandles};
 use crate::memory::{AddressSpace, LoadedUserProgram, OwnedPages};
-use crate::process::{Process, ProcessId};
+use crate::process::{Process, ProcessExitAction, ProcessId};
 use crate::thread::{Thread, ThreadContext, ThreadId, ThreadStart, ThreadState, UserThreadStart};
 
 use super::bootstrap::ProcessConfig;
@@ -81,6 +81,7 @@ impl SchedulerState {
             config.name,
             config.address_space,
             config.owned_pages,
+            config.exit_action,
         );
 
         if let Some(endpoint) = config.terminal_endpoint {
@@ -136,7 +137,13 @@ impl SchedulerState {
             });
         };
         let process_id = ProcessId(slot);
-        let mut child = Process::new(process_id, "user-child", address_space, owned_pages);
+        let mut child = Process::new(
+            process_id,
+            "user-child",
+            address_space,
+            owned_pages,
+            ProcessExitAction::Continue,
+        );
 
         let inherited_stdio = if silent_stdio {
             self.process(parent_process_id)
@@ -263,17 +270,14 @@ impl SchedulerState {
         })
     }
 
-    pub(super) fn prepare_exit_current_process(
-        &mut self,
-        status: usize,
-    ) -> Option<ExitedThreadSwitch> {
+    pub(super) fn prepare_exit_current_process(&mut self, status: usize) -> Option<ProcessExit> {
         let current_thread = self.current_thread?;
         let process_id = self.thread(current_thread).process_id();
 
-        let waiting_thread = {
+        let (waiting_thread, exit_action) = {
             let process = self.process_mut(process_id);
             process.mark_exited(status);
-            process.take_waiting_thread()
+            (process.take_waiting_thread(), process.exit_action())
         };
 
         self.threads[current_thread.0] = None;
@@ -282,6 +286,11 @@ impl SchedulerState {
             process.take_owned_pages()
         };
         self.processes[process_id.0] = None;
+
+        if matches!(exit_action, ProcessExitAction::ShutdownSystem) {
+            self.current_thread = None;
+            return Some(ProcessExit::Shutdown(ShutdownExit { released_pages }));
+        }
 
         let next = if let Some(waiting_thread) = waiting_thread {
             let thread = self.thread_mut(waiting_thread);
@@ -297,12 +306,12 @@ impl SchedulerState {
         let activation = self.activation(next);
         let next_context = self.thread_context(next) as *const ThreadContext;
 
-        Some(ExitedThreadSwitch {
+        Some(ProcessExit::Switch(ExitedThreadSwitch {
             next_context,
             next_space: activation.address_space,
             next_stack_top: activation.kernel_stack_top,
             released_pages,
-        })
+        }))
     }
 
     pub(super) fn next_runnable_thread(&self, current: Option<ThreadId>) -> Option<ThreadId> {
@@ -412,6 +421,15 @@ pub(super) struct ExitedThreadSwitch {
     pub(super) next_context: *const ThreadContext,
     pub(super) next_space: AddressSpace,
     pub(super) next_stack_top: u64,
+    pub(super) released_pages: OwnedPages,
+}
+
+pub(super) enum ProcessExit {
+    Switch(ExitedThreadSwitch),
+    Shutdown(ShutdownExit),
+}
+
+pub(super) struct ShutdownExit {
     pub(super) released_pages: OwnedPages,
 }
 

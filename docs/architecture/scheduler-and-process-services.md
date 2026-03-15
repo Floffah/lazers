@@ -33,6 +33,7 @@ They own:
 
 - process creation helpers used during bootstrap
 - synchronous child spawn-and-wait
+- top-level process exit policy, including shutdown-on-exit for the bootstrap session owner
 - stdio reads and writes through the current process
 - cwd lookup and mutation
 - environment get, set, unset, and listing

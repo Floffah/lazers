@@ -2,7 +2,7 @@ use crate::arch;
 use crate::process::ProcessId;
 use crate::thread::{ThreadContext, ThreadStart, ThreadState};
 
-use super::state::{with_scheduler, with_scheduler_mut};
+use super::state::{with_scheduler, with_scheduler_mut, ProcessExit};
 
 /// Transfers control from bootstrap code into the first runnable thread.
 ///
@@ -68,20 +68,29 @@ pub fn wait_for_child(child_process: ProcessId) -> Option<usize> {
 /// Terminates the current user process, wakes any waiting parent thread, and
 /// never returns.
 pub fn exit_current_process(status: usize) -> ! {
-    let switch = with_scheduler_mut(|scheduler| scheduler.prepare_exit_current_process(status));
-    let Some(switch) = switch else {
+    let exit = with_scheduler_mut(|scheduler| scheduler.prepare_exit_current_process(status));
+    let Some(exit) = exit else {
         crate::halt_forever();
     };
 
-    arch::activate_address_space(switch.next_space, switch.next_stack_top);
-    let _ = switch.released_pages;
-    unsafe {
-        with_scheduler_mut(|scheduler| {
-            super::context_switch(
-                &mut scheduler.bootstrap_context as *mut ThreadContext,
-                switch.next_context,
-            );
-        });
+    match exit {
+        ProcessExit::Switch(switch) => {
+            arch::activate_address_space(switch.next_space, switch.next_stack_top);
+            switch.released_pages.release();
+            unsafe {
+                with_scheduler_mut(|scheduler| {
+                    super::context_switch(
+                        &mut scheduler.bootstrap_context as *mut ThreadContext,
+                        switch.next_context,
+                    );
+                });
+            }
+        }
+        ProcessExit::Shutdown(shutdown) => {
+            let _ = shutdown.released_pages;
+            crate::terminal::flush_primary_output();
+            crate::power::shutdown();
+        }
     }
 
     crate::halt_forever()

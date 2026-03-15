@@ -22,6 +22,14 @@ pub enum ProcessState {
     Exited(usize),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Action the kernel should take when this process exits without another policy
+/// layer intercepting it.
+pub enum ProcessExitAction {
+    Continue,
+    ShutdownSystem,
+}
+
 /// Process metadata and owned resources.
 pub struct Process {
     #[allow(dead_code)]
@@ -37,6 +45,7 @@ pub struct Process {
     cwd_len: usize,
     env: Environment,
     owned_pages: OwnedPages,
+    exit_action: ProcessExitAction,
 }
 
 impl Process {
@@ -46,6 +55,7 @@ impl Process {
         name: &'static str,
         address_space: AddressSpace,
         owned_pages: OwnedPages,
+        exit_action: ProcessExitAction,
     ) -> Self {
         Self {
             id,
@@ -59,6 +69,7 @@ impl Process {
             cwd_len: 1,
             env: Environment::new(),
             owned_pages,
+            exit_action,
         }
     }
 
@@ -91,6 +102,11 @@ impl Process {
     /// Marks the process as exited with the provided status code.
     pub fn mark_exited(&mut self, status: usize) {
         self.state = ProcessState::Exited(status);
+    }
+
+    /// Returns the configured kernel action for this process' exit.
+    pub const fn exit_action(&self) -> ProcessExitAction {
+        self.exit_action
     }
 
     /// Remembers which thread is synchronously waiting on this process.

@@ -12,7 +12,7 @@ The boot sequence is deliberately simple:
 4. The loader gathers the framebuffer mode, a normalized memory map, the ACPI RSDP if present, and an initial kernel stack.
 5. The loader exits boot services.
 6. The loader jumps into the kernel with `rdi = BootInfo`.
-7. The kernel takes over paging, initializes core CPU structures, mounts the runtime filesystem, loads the first user program, and starts the scheduler.
+7. The kernel takes over paging, initializes core CPU structures, discovers shutdown support, mounts the runtime filesystem, loads the first user program, and starts the scheduler.
 
 By the time the first user process appears, the firmware is out of the picture. Everything after that point is kernel-owned runtime behavior.
 
@@ -49,7 +49,7 @@ The loader, kernel, and shared ELF parser also now rely on one tiny internal wor
 
 The kernel does not hardcode shell behavior, but it does currently choose one initial user program at build time. The default is `/system/bin/lash`, and alternate bootstrap programs like `/system/bin/selftest` can be selected for specialized images.
 
-This keeps session policy narrow for now: the kernel launches one first program, and that program owns the higher-level behavior.
+This keeps session policy narrow for now: the kernel launches one first program, and that program owns the higher-level behavior. When that top-level program exits, the kernel now treats that as the end of the session and requests a system shutdown.
 
 ## What This Page Does Not Cover
 

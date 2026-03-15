@@ -8,6 +8,7 @@ use core::cell::UnsafeCell;
 
 use crate::console;
 use crate::keyboard::{KeyCode, KeyEvent, KeyState};
+use crate::serial;
 
 const TERMINAL_INPUT_CAPACITY: usize = 256;
 const TERMINAL_OUTPUT_CAPACITY: usize = 1024;
@@ -42,6 +43,7 @@ impl TerminalEndpoint {
 
     /// Pushes one output byte emitted by a program.
     pub fn push_output_byte(&self, byte: u8) -> bool {
+        serial::write_byte(byte);
         unsafe { (*self.state.get()).output.push(byte) }
     }
 
@@ -88,6 +90,11 @@ impl TerminalSurface {
 /// Returns the single bootstrap terminal endpoint used by the early system.
 pub fn primary_endpoint() -> &'static TerminalEndpoint {
     &PRIMARY_TERMINAL_ENDPOINT
+}
+
+/// Drains any queued output for the bootstrap terminal session immediately.
+pub fn flush_primary_output() {
+    TerminalSurface::new(primary_endpoint()).flush_output();
 }
 
 fn key_event_to_input_byte(event: KeyEvent) -> Option<u8> {

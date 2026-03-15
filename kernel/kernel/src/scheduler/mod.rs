@@ -21,6 +21,7 @@ unsafe extern "C" {
     );
 }
 
+pub use crate::process::ProcessExitAction;
 pub use bootstrap::{
     create_kernel_thread, create_process, create_user_thread, init, mark_idle_thread,
     set_process_env, ProcessConfig,

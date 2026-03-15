@@ -15,7 +15,9 @@ use core::arch::{asm, global_asm};
 use core::panic::PanicInfo;
 use kernel::kprintln;
 use kernel::memory::LoadedUserProgram;
-use kernel::{arch, console, halt_forever, keyboard, memory, scheduler, storage, terminal};
+use kernel::{
+    arch, console, halt_forever, keyboard, memory, power, scheduler, serial, storage, terminal,
+};
 
 global_asm!(include_str!("main.asm"));
 
@@ -43,7 +45,9 @@ pub extern "sysv64" fn kernel_main(boot_info: *const BootInfo) -> ! {
     memory::init(boot_info)
         .unwrap_or_else(|error| panic!("memory init failed: {}", error.as_str()));
     arch::init();
+    serial::init();
     console::init(boot_info.framebuffer);
+    power::init(boot_info.acpi_rsdp_addr);
     console::clear();
     kprintln!("Welcome to lazers !!");
     kprintln!(
@@ -67,12 +71,14 @@ pub extern "sysv64" fn kernel_main(boot_info: *const BootInfo) -> ! {
         address_space: memory::kernel_address_space(),
         terminal_endpoint: None,
         owned_pages: memory::OwnedPages::empty(),
+        exit_action: scheduler::ProcessExitAction::Continue,
     });
     let user_process = scheduler::create_process(scheduler::ProcessConfig {
         name: "user-bootstrap",
         address_space: user_program.address_space,
         terminal_endpoint: Some(endpoint),
         owned_pages: user_program.owned_pages,
+        exit_action: scheduler::ProcessExitAction::ShutdownSystem,
     });
     scheduler::set_process_env(user_process, "PATH", "/system/bin:/bin")
         .unwrap_or_else(|_| panic!("failed to seed bootstrap environment"));

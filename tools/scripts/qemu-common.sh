@@ -86,7 +86,6 @@ qemu_base_args() {
     -device ich9-ahci,id=ahci \
     -drive "if=none,id=systemdisk,format=raw,file=$IMAGE_PATH" \
     -device ide-hd,bus=ahci.0,drive=systemdisk \
-    -no-reboot \
-    -no-shutdown
+    -no-reboot
   )
 }

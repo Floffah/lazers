@@ -28,9 +28,14 @@ pub mod memory;
 #[cfg(not(test))]
 pub mod pci;
 #[cfg(not(test))]
+pub mod port_io;
+pub mod power;
+#[cfg(not(test))]
 pub mod process;
 #[cfg(not(test))]
 pub mod scheduler;
+#[cfg(not(test))]
+pub mod serial;
 pub mod storage;
 #[cfg(not(test))]
 pub mod syscall;

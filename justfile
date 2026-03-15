@@ -32,7 +32,7 @@ image: build-loader build-user build-kernel
     LAZERS_USER_PACKAGES="$(source tools/scripts/user-packages.sh ; list_user_packages)" tools/scripts/build-image.sh
 
 image-selftest: build-loader build-user
-    just build-kernel {{selftest_initial_user_program}}
+    @just build-kernel {{selftest_initial_user_program}}
     LAZERS_USER_PACKAGES="$(source tools/scripts/user-packages.sh ; list_user_packages)" LAZERS_IMAGE_NAME='lazers-selftest.img' tools/scripts/build-image.sh
 
 build: image
@@ -61,9 +61,14 @@ check:
     done ; \
     cargo check --package kernel --target {{kernel_target}}
 
-test: check
+unit-test:
     cargo test --package kernel --lib
     cargo test --package lash
+
+selftest: image-selftest
+    LAZERS_IMAGE_NAME=lazers-selftest.img bash tools/scripts/run-qemu-selftest.sh
+
+test: check unit-test selftest
 
 clean:
     cargo clean

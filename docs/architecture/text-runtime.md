@@ -23,6 +23,7 @@ The current system is still small, but the boundary is already real:
 - one fullscreen terminal surface renders text to the framebuffer
 - one terminal endpoint carries byte-stream input and output
 - one kernel thread owns keyboard polling and screen flushing
+- terminal output is also mirrored to serial when a bootstrap serial port is available
 - one user shell process is loaded from disk and talks only through stdio
 - child processes inherit stdio and run synchronously through spawn-and-wait
 

@@ -14,6 +14,7 @@ use core::slice;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::font::{glyph_for, GLYPH_HEIGHT, GLYPH_WIDTH};
+use crate::serial;
 
 const DEFAULT_FOREGROUND: u32 = 0xf9fafb;
 const DEFAULT_BACKGROUND: u32 = 0x111827;
@@ -88,6 +89,7 @@ impl FramebufferConsole {
     /// Unsupported bytes are handled by the glyph layer rather than here.
     pub fn write_str(&mut self, text: &str) {
         for byte in text.bytes() {
+            serial::write_byte(byte);
             self.write_terminal_byte(byte);
         }
     }

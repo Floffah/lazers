@@ -26,6 +26,7 @@ qemu-system-x86_64 \
   -monitor "unix:$MONITOR_PATH,server,nowait" \
   -display none \
   -serial none \
+  -no-shutdown \
   -daemonize
 
 for _ in $(seq 1 20); do

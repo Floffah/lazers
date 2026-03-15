@@ -1,5 +1,5 @@
 use crate::memory::{AddressSpace, OwnedPages};
-use crate::process::ProcessId;
+use crate::process::{ProcessExitAction, ProcessId};
 use crate::terminal::TerminalEndpoint;
 use crate::thread::{KernelThreadEntry, ThreadId, ThreadStart, UserThreadStart};
 
@@ -12,6 +12,7 @@ pub struct ProcessConfig {
     pub address_space: AddressSpace,
     pub terminal_endpoint: Option<&'static TerminalEndpoint>,
     pub owned_pages: OwnedPages,
+    pub exit_action: ProcessExitAction,
 }
 
 /// Resets the global scheduler state to an empty runtime.
